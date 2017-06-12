@@ -16,7 +16,8 @@ all_characters = string.printable
 n_characters = len(all_characters)
 SOS = n_characters
 EOS = n_characters + 1
-n_characters += 2
+UNK = n_characters + 2
+n_characters += 3
 
 def read_file(filename):
     file = unidecode.unidecode(open(filename).read())
@@ -42,6 +43,8 @@ def index_to_char(top_i):
         return '$'
     elif top_i == SOS:
         return '^'
+    elif top_i == UNK:
+        return '*'
     else:
         return all_characters[top_i]
 
@@ -52,8 +55,8 @@ def tensor_to_string(t):
         top_k = ti.data.topk(1)
         top_i = top_k[1][0]
         s += index_to_char(top_i)
-        if top_i == EOS: break
-    return s
+    return s.split(index_to_char(EOS))[0]
+    #return s
 
 def longtensor_to_string(t):
     s = ''

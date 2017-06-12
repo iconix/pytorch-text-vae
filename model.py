@@ -54,7 +54,7 @@ class EncoderRNN(Encoder):
 # Decode from Z into sequence
 
 class DecoderRNN(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, n_layers=1, dropout_p=0.1):
+    def __init__(self, input_size, hidden_size, output_size, n_layers=1, input_keep=1.):
         super(DecoderRNN, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -62,10 +62,11 @@ class DecoderRNN(nn.Module):
         self.n_layers = n_layers
 
         self.embed = nn.Embedding(output_size, hidden_size)
-        self.dropout = nn.Dropout(dropout_p)
+        # ???
+        self.input_keep = input_keep
         # self.gru = nn.GRU(hidden_size + input_size, hidden_size, n_layers)
         self.z2h = nn.Linear(input_size, hidden_size)
-        self.gru = nn.GRU(hidden_size + input_size, hidden_size, n_layers, dropout=dropout_p)
+        self.gru = nn.GRU(hidden_size + input_size, hidden_size, n_layers)
         self.i2h = nn.Linear(hidden_size + input_size, hidden_size)
         self.h2o = nn.Linear(hidden_size * 2, hidden_size)
         self.out = nn.Linear(hidden_size + input_size, output_size)
@@ -97,6 +98,11 @@ class DecoderRNN(nn.Module):
         hidden = self.z2h(z).unsqueeze(0).repeat(self.n_layers, 1, 1)
 
         for i in range(n_steps):
+            if random.random() > self.input_keep:
+                input = Variable(torch.LongTensor([UNK]))
+                if USE_CUDA:
+                    input = input.cuda()
+
             output, hidden = self.step(i, z, input, hidden, temperature)
             outputs[i] = output
 
@@ -122,8 +128,7 @@ class DecoderRNN(nn.Module):
             output, hidden = self.step(i, z, input, hidden, temperature)
             outputs[i] = output
             input, top_i = self.sample(output, temperature)
-            if top_i == EOS: break
-
+            #if top_i == EOS: break
         return outputs.squeeze(1)
 
     def step(self, s, z, input, hidden, temperature=1.0):
@@ -146,9 +151,9 @@ class VAE(nn.Module):
         self.encoder = encoder
         self.decoder = decoder
 
-    def forward(self, inputs, temperature=1.0):
+    def forward(self, inputs, targets, temperature=1.0):
         m, l, z = self.encoder(inputs)
-        decoded = self.decoder(z, inputs, temperature)
+        decoded = self.decoder(z, targets, temperature)
         return m, l, z, decoded
 
 # Test
