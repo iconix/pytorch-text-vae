@@ -2,12 +2,14 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 import torch.nn.functional as F
-from helpers import *
+from datasets import *
 
 MIN_LENGTH = 10
 MAX_LENGTH = 50
 MAX_SAMPLE = False
 MAX_SAMPLE = True
+model_random_state = np.random.RandomState(1988)
+torch.manual_seed(1999)
 
 class Encoder(nn.Module):
     def sample(self, mu, logvar):
@@ -92,21 +94,21 @@ class DecoderRNN(nn.Module):
         if USE_CUDA:
             outputs = outputs.cuda()
 
-        input = Variable(torch.LongTensor([SOS]))
+        input = Variable(torch.LongTensor([SOS_token]))
         if USE_CUDA:
             input = input.cuda()
         hidden = self.z2h(z).unsqueeze(0).repeat(self.n_layers, 1, 1)
 
         for i in range(n_steps):
-            if random.random() > self.input_keep:
-                input = Variable(torch.LongTensor([UNK]))
+            if model_random_state.rand() > self.input_keep:
+                input = Variable(torch.LongTensor([UNK_token]))
                 if USE_CUDA:
                     input = input.cuda()
 
             output, hidden = self.step(i, z, input, hidden, temperature)
             outputs[i] = output
 
-            use_teacher_forcing = random.random() < temperature
+            use_teacher_forcing = model_random_state.rand() < temperature
             if use_teacher_forcing:
                 input = inputs[i]
             else:
@@ -119,7 +121,7 @@ class DecoderRNN(nn.Module):
         if USE_CUDA:
             outputs = outputs.cuda()
 
-        input = Variable(torch.LongTensor([SOS]))
+        input = Variable(torch.LongTensor([SOS_token]))
         if USE_CUDA:
             input = input.cuda()
         hidden = self.z2h(z).unsqueeze(0).repeat(self.n_layers, 1, 1)

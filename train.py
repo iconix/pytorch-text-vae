@@ -1,13 +1,15 @@
-#import sconce
 import sys
+import os
 import numpy as np
-import re
-import unicodedata
 from model import *
+from datasets import get_vocabulary, prepare_pair_data
+import cPickle as pickle
+
 
 encoder_hidden_size = 1024
 decoder_hidden_size = 256
 embed_size = 500
+vocabulary_size = 20000
 learning_rate = 0.0001
 n_epochs = 500000
 grad_clip = 1.0
@@ -31,97 +33,22 @@ if len(sys.argv) < 2:
     print("Usage: python train.py [filename]")
     sys.exit(1)
 
-SOS_token = 0
-EOS_token = 1
-UNK_token = 2
+reverse = True
+csv = False
+if sys.argv[1].endswith(".csv"):
+    csv = True
 
-class Lang:
-    def __init__(self, name):
-        self.name = name
-        self.word2index = {}
-        self.word2count = {}
-        self.index2word = {0: "SOS", 1: "EOS", 2: "UNK"}
-        self.n_words = 3 # Count SOS, EOS, UNK
+tmp_path = "/Tmp/kastner/"
+cache_path = tmp_path + sys.argv[1].split(".")[0] + "_stored_info.pkl"
+if not os.path.exists(cache_path):
+    input_side, output_side, pairs = prepare_pair_data(sys.argv[1], vocabulary_size, reverse, csv)
+    with open(cache_path, "wb") as f:
+        pickle.dump((input_side, output_side, pairs), f)
+else:
+    print("Fetching cached info at {}".format(cache_path))
+    with open(cache_path, "rb") as f:
+        input_side, output_side, pairs = pickle.load(f)
 
-    def index_words(self, sentence):
-        for word in sentence.split(' '):
-            self.index_word(word)
-
-    def index_word(self, word):
-        if word not in self.word2index:
-            self.word2index[word] = self.n_words
-            self.word2count[word] = 1
-            self.index2word[self.n_words] = word
-            self.n_words += 1
-        else:
-            self.word2count[word] += 1
-
-# Turn a Unicode string to plain ASCII, thanks to http://stackoverflow.com/a/518232/2809427
-def unicode_to_ascii(s):
-    return ''.join(
-        c for c in unicodedata.normalize(u'NFD', unicode(s))
-        if unicodedata.category(c) != u'Mn'
-    )
-
-# Lowercase, trim, and remove non-letter characters
-def normalize_string(s):
-    s = unicode_to_ascii(s.lower().strip())
-    s = re.sub(r"([.!?])", r" \1", s)
-    s = re.sub(r"[^a-zA-Z.!?]+", r" ", s)
-    return s
-
-MIN_LENGTH = 5
-MAX_LENGTH = 20
-
-def read_langs(reverse=False):
-    print("Reading lines...")
-
-    # Read the file and split into lines
-    f, flen = read_file(sys.argv[1])
-    lines = []
-    for n, line in enumerate(f.split("\n")):
-        if len(line.strip()) > 0:
-            l = line.strip().split(",")[1]
-            l = re.sub(r'[^\w]', ' ', l)
-            if "." in l:
-                l = l.split(".")[0]
-            l = re.sub(r'\s+', ' ', l).strip().lstrip().rstrip()
-            lines.append(l)
-
-    # Split every line into pairs and normalize
-    pairs = [[normalize_string(l), normalize_string(l)] for l in lines]
-
-    # Reverse second of pairs, make Lang instances
-    if reverse:
-        pairs = [(p[0], "".join(list(reversed(p[1])))) for p in pairs]
-
-    input_lang = Lang("in")
-    output_lang = Lang("out")
-
-    return input_lang, output_lang, pairs
-
-
-def filter_pair(p):
-    return MIN_LENGTH < len(p[0].split(' ')) < MAX_LENGTH and MIN_LENGTH < len(p[1].split(' ')) < MAX_LENGTH
-
-def filter_pairs(pairs):
-    return [pair for pair in pairs if filter_pair(pair)]
-
-def prepare_data(reverse=False):
-    input_side, output_side, pairs = read_langs(reverse)
-    print("Read %s sentence pairs" % len(pairs))
-
-    pairs = filter_pairs(pairs)
-    print("Trimmed to %s sentence pairs" % len(pairs))
-
-    print("Indexing words...")
-    for pair in pairs:
-        input_side.index_words(pair[0])
-        output_side.index_words(pair[1])
-
-    return input_side, output_side, pairs
-
-input_side, output_side, pairs = prepare_data(True)
 random_state = np.random.RandomState(1999)
 random_state.shuffle(pairs)
 
@@ -131,7 +58,7 @@ def word_tensor(lang, string):
     size = len(split_string) + 1
     tensor = torch.zeros(size).long()
     for c in range(len(split_string)):
-        tensor[c] = lang.word2index[split_string[c]]
+        tensor[c] = lang.word_to_index(split_string[c])
     tensor[-1] = EOS_token
     tensor = Variable(tensor)
     if USE_CUDA:
@@ -147,7 +74,7 @@ def index_to_word(lang, top_i):
     elif top_i == UNK_token:
         return 'UNK' + " "
     else:
-        return lang.index2word[top_i] + " "
+        return lang.index_to_word(top_i) + " "
 
 def long_word_tensor_to_string(lang, t):
     s = ''

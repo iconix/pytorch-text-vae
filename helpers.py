@@ -11,13 +11,9 @@ from torch.autograd import Variable
 USE_CUDA = True
 
 # Reading and un-unicode-encoding data
-
-all_characters = string.printable
-n_characters = len(all_characters)
-SOS = n_characters
-EOS = n_characters + 1
-UNK = n_characters + 2
-n_characters += 3
+SOS_token = 0
+EOS_token = 1
+UNK = 2
 
 def read_file(filename):
     file = unidecode.unidecode(open(filename).read())
