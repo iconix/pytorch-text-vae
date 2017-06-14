@@ -206,6 +206,7 @@ def prepare_pair_data(path, vocabulary_size, reverse=False, csv=False):
     # takes ~ 30s to get a block done
     empty_wait = 2
     avg_time_per_block = 30
+    status_every = 100000
     print("Starting block processing")
     for n, line in enumerate(read_file_line_gen(path)):
         curr_block.append(line)
@@ -222,37 +223,46 @@ def prepare_pair_data(path, vocabulary_size, reverse=False, csv=False):
                     pairs.extend(r)
             except:
                 last_empty = time.time()
-        if n % 100000 == 0:
+        if n % status_every == 0:
             with iolock:
                 print("Queued line {}".format(n))
                 tt = time.time() - start_time
                 print("Elapsed time {}".format(tt))
                 tl = len(pairs)
                 print("Total lines {}".format(tl))
-                avg_time_per_block = max(30, block_size * tl / tt)
+                avg_time_per_block = max(30, block_size * (tt / (tl + 1)))
                 print("Approximate lines / s {}".format(tl / tt))
     # finish the queue
     q.put(curr_block)
-    last_get = time.time()
-    wait = 2.1 * avg_time_per_block
     print("Finalizing line processing")
-    print("Waiting {} s".format(wait))
     for _ in range(N_CORE):  # tell workers we're done
         q.put(None)
+    empty_checks = 0
+    prev_len = len(pairs)
+    last_status = time.time()
+    print("Total lines {}".format(len(pairs)))
     while True:
-        if last_get < time.time() - wait:
+        if empty_checks > 10:
             break
-        if last_empty < time.time() - empty_wait:
+        if status_every < (len(pairs) - prev_len) or last_status < time.time() - empty_wait:
+            print("Total lines {}".format(len(pairs)))
+            prev_len = len(pairs)
+            last_status = time.time()
+        if not oq.empty():
             try:
                 while True:
                     with iolock:
                         r = oq.get(block=True, timeout=.0001)
                     pairs.extend(r)
-                    last_get = time.time()
-                    print("Total lines {}".format(len(pairs)))
+                    empty_checks = 0
             except:
-                last_empty = time.time()
+                # Queue.Empty
+                pass
+        elif oq.empty():
+            empty_checks += 1
+            time.sleep(empty_wait)
     print("Line processing complete")
+    print("Final line count {}".format(len(pairs)))
     pool.close()
     pool.join()
     print("Pair preparation complete")
