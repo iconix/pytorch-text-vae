@@ -9,6 +9,7 @@ try:
 except ImportError:
     import queue as Queue
 import multiprocessing as mp
+import cPickle as pickle
 
 import numpy as np
 import re
@@ -109,24 +110,11 @@ class Lang:
 
 
 MIN_LENGTH = 5
-MAX_LENGTH = 20
+MAX_LENGTH = 15
 
 
 def filter_pair(p):
     return MIN_LENGTH < len(p[0].split(' ')) < MAX_LENGTH and MIN_LENGTH < len(p[1].split(' ')) < MAX_LENGTH
-
-
-words = None
-reverse_words = None
-def _setup(vocabulary_size):
-    global words
-    global reverse_words
-    the_words = ["SOS", "EOS", "UNK"] + [w[0] for w in get_vocabulary()]
-    words = collections.defaultdict(lambda: "UNK")
-    reverse_words = collections.defaultdict(lambda: "UNK")
-    for k in the_words[:vocabulary_size]:
-        words[k] = k
-        reverse_words[k[::-1]] = k[::-1]
 
 
 def process_input_side(s):
@@ -135,6 +123,39 @@ def process_input_side(s):
 
 def process_output_side(s):
     return " ".join([reverse_words[w] for w in s.split(" ")])
+
+
+words = None
+reverse_words = None
+
+def unk_func():
+    return "UNK"
+
+def _setup(filepath, vocabulary_size, csv):
+    global words
+    global reverse_words
+    wc = collections.Counter()
+    for n, line in enumerate(read_file_line_gen(filepath)):
+        if n % 100000 == 0:
+            print("Fetching vocabulary from line {}".format(n))
+            print("Current word count {}".format(len(wc.keys())))
+        l = line.strip().lstrip().rstrip()
+        if MIN_LENGTH < len(l.split(' ')) < MAX_LENGTH:
+            l = normalize_string(l)
+            words = l.split(" ")
+            wc.update(words)
+        else:
+            continue
+    the_words = ["SOS", "EOS", "UNK"]
+    the_reverse_words = ["SOS", "EOS", "UNK"]
+    the_words += [wi[0] for wi in wc.most_common()[:vocabulary_size - 3]]
+    the_reverse_words += [wi[0][::-1] for wi in wc.most_common()[:vocabulary_size - 3]]
+
+    words = collections.defaultdict(unk_func)
+    reverse_words = collections.defaultdict(unk_func)
+    for k in range(len(the_words)):
+        words[the_words[k]] = the_words[k]
+        reverse_words[the_reverse_words[k]] = the_reverse_words[k]
 
 
 def proc_line(line, reverse):
@@ -174,11 +195,27 @@ def process(q, oq, iolock):
 # https://stackoverflow.com/questions/43078980/python-multiprocessing-with-generator
 def prepare_pair_data(path, vocabulary_size, reverse=False, csv=False):
     print("Reading lines...")
-    print("Prepping vocabulary")
-    # Read the file and split into lines
-    #f, flen = read_file(path)
-    _setup(vocabulary_size)
+    pkl_path = path.split(os.sep)[-1].split(".")[0] + "_vocabulary.pkl"
+    vocab_cache_path = "/Tmp/kastner/" + pkl_path
+    global words
+    global reverse_words
+    if not os.path.exists(vocab_cache_path):
+        print("Vocabulary cache {} not found".format(vocab_cache_path))
+        print("Prepping vocabulary")
+        # Read the file and split into lines
+        #f, flen = read_file(path)
+        _setup(path, vocabulary_size, csv)
+        with open(vocab_cache_path, "wb") as f:
+            pickle.dump((words, reverse_words), f)
+    else:
+        print("Vocabulary cache {} found".format(vocab_cache_path))
+        print("Loading...".format(vocab_cache_path))
+        with open(vocab_cache_path, "rb") as f:
+            r = pickle.load(f)
+        words = r[0]
+        reverse_words = r[1]
     print("Vocabulary prep complete")
+
 
     # don't use these for processing, but pass for ease of use later on
     input_side = Lang("in", vocabulary_size)
