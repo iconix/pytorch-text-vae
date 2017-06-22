@@ -50,6 +50,50 @@ def weight_norm(module, name):
     return module
 
 
+def word_tensor(lang, string):
+    split_string = string.split(" ")
+    size = len(split_string) + 1
+    tensor = torch.zeros(size).long()
+    for c in range(len(split_string)):
+        tensor[c] = lang.word_to_index(split_string[c])
+    tensor[-1] = EOS_token
+    tensor = Variable(tensor)
+    if USE_CUDA:
+        tensor = tensor.cuda()
+    return tensor
+
+
+def index_to_word(lang, top_i):
+    if top_i == EOS_token:
+        return 'EOS' + " "
+    elif top_i == SOS_token:
+        return 'SOS' + " "
+    elif top_i == UNK_token:
+        return 'UNK' + " "
+    else:
+        return lang.index_to_word(top_i) + " "
+
+
+def long_word_tensor_to_string(lang, t):
+    s = ''
+    for i in range(t.size(0)):
+        top_i = t.data[i]
+        s += index_to_word(lang, top_i)
+    return s
+
+
+def float_word_tensor_to_string(lang, t):
+    s = ''
+    for i in range(t.size(0)):
+        ti = t[i]
+        top_k = ti.data.topk(1)
+        top_i = top_k[1][0]
+        s += index_to_word(lang, top_i)
+        if top_i == EOS_token:
+            break
+    return s
+
+
 class Encoder(nn.Module):
     def sample(self, mu, logvar):
         eps = Variable(torch.randn(mu.size()))
@@ -198,6 +242,10 @@ class VAE(nn.Module):
         super(VAE, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
+
+    def encode(self, inputs):
+        m, l, z = self.encoder(inputs)
+        return m, l, z
 
     def forward(self, inputs, targets, temperature=1.0):
         m, l, z = self.encoder(inputs)

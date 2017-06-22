@@ -12,7 +12,7 @@ decoder_hidden_size = 512
 embed_size = 512
 vocabulary_size = 20000
 learning_rate = 0.0001
-n_steps = 500000
+n_steps = 2000000
 grad_clip = 1.0
 
 save_every = n_steps // 20
@@ -24,15 +24,15 @@ kld_weight = 1.0
 kld_max = 1.0
 kld_inc = 0.
 #kld_inc = (kld_max - kld_weight) / (.01 * n_steps)
-freebits_lambda = 2.0
+freebits_lambda = 1.0
 
-word_dropout = 0.1
+word_dropout = 0.25
 
-temperature = .9
-temperature_min = .85
-#temperature_dec = 0.
+temperature = 1.
+temperature_min = 1.
+temperature_dec = 0.
 # should get to the temperature around 80% through training, then hold
-temperature_dec = (temperature - temperature_min) / (0.8 * n_steps)
+#temperature_dec = (temperature - temperature_min) / (0.8 * n_steps)
 USE_CUDA = True
 
 
@@ -48,8 +48,12 @@ csv = False
 if sys.argv[1].endswith(".csv"):
     csv = True
 
-tmp_path = "/Tmp/kastner/"
-cache_path = tmp_path + sys.argv[1].split(os.sep)[-1].split(".")[0] + "_stored_info.pkl"
+if sys.argv[1].endswith(".pkl"):
+    cache_path = sys.argv[1]
+else:
+    tmp_path = "/Tmp/kastner/"
+    cache_path = tmp_path + sys.argv[1].split(os.sep)[-1].split(".")[0] + "_stored_info.pkl"
+
 if not os.path.exists(cache_path):
     print("Cached info at {} not found".format(cache_path))
     print("Creating cache... this may take some time")
@@ -67,47 +71,6 @@ else:
 random_state = np.random.RandomState(1999)
 random_state.shuffle(pairs)
 
-
-def word_tensor(lang, string):
-    split_string = string.split(" ")
-    size = len(split_string) + 1
-    tensor = torch.zeros(size).long()
-    for c in range(len(split_string)):
-        tensor[c] = lang.word_to_index(split_string[c])
-    tensor[-1] = EOS_token
-    tensor = Variable(tensor)
-    if USE_CUDA:
-        tensor = tensor.cuda()
-    return tensor
-
-
-def index_to_word(lang, top_i):
-    if top_i == EOS_token:
-        return 'EOS' + " "
-    elif top_i == SOS_token:
-        return 'SOS' + " "
-    elif top_i == UNK_token:
-        return 'UNK' + " "
-    else:
-        return lang.index_to_word(top_i) + " "
-
-def long_word_tensor_to_string(lang, t):
-    s = ''
-    for i in range(t.size(0)):
-        top_i = t.data[i]
-        s += index_to_word(lang, top_i)
-    return s
-
-def float_word_tensor_to_string(lang, t):
-    s = ''
-    for i in range(t.size(0)):
-        ti = t[i]
-        top_k = ti.data.topk(1)
-        top_i = top_k[1][0]
-        s += index_to_word(lang, top_i)
-        if top_i == EOS_token:
-            break
-    return s
 
 def random_training_set():
     pair_i = random_state.choice(len(pairs))
