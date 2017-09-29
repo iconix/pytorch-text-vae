@@ -242,6 +242,7 @@ class VAE(nn.Module):
         super(VAE, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
+        self.steps_seen = 0
 
     def encode(self, inputs):
         m, l, z = self.encoder(inputs)

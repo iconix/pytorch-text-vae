@@ -4,6 +4,7 @@ import numpy as np
 from model import *
 from datasets import get_vocabulary, prepare_pair_data
 import cPickle as pickle
+import shutil
 
 
 encoder_hidden_size = 512
@@ -12,27 +13,28 @@ decoder_hidden_size = 512
 embed_size = 512
 vocabulary_size = 20000
 learning_rate = 0.0001
-n_steps = 2000000
-grad_clip = 1.0
+n_steps = 2200000
+grad_clip = 10.0
 
 save_every = n_steps // 20
 log_every_n_seconds = 5 * 60
 log_every_n_steps = 10000
 
-kld_start_inc = 0 #.01 * n_steps
-kld_weight = 1.0
+#kld_start_inc = 0 #.01 * n_steps
+kld_start_inc = 5000
+kld_weight = 0.0
 kld_max = 1.0
-kld_inc = 0.
-#kld_inc = (kld_max - kld_weight) / (.01 * n_steps)
-freebits_lambda = 1.0
+kld_inc = (kld_max - kld_weight) / 10000
+#kld_inc = 0.
+habits_lambda = .2
 
 word_dropout = 0.25
 
-temperature = 1.
-temperature_min = 1.
-temperature_dec = 0.
+temperature = 1.0
+temperature_min = 1.0
 # should get to the temperature around 80% through training, then hold
 #temperature_dec = (temperature - temperature_min) / (0.8 * n_steps)
+temperature_dec = 0.
 USE_CUDA = True
 
 
@@ -83,7 +85,7 @@ def random_training_set():
     return inp, target
 
 n_words = input_side.n_words
-e = EncoderRNN(n_words, encoder_hidden_size, embed_size, n_encoder_layers, bidirectional=False)
+e = EncoderRNN(n_words, encoder_hidden_size, embed_size, n_encoder_layers, bidirectional=True)
 
 # custom weights initialization
 def rnn_weights_init(m):
@@ -98,8 +100,29 @@ d = DecoderRNN(embed_size, decoder_hidden_size, n_words, 1, word_dropout=word_dr
 rnn_weights_init(d)
 
 vae = VAE(e, d)
-optimizer = torch.optim.Adam(vae.parameters(), lr=learning_rate)
+if os.path.exists("vae.pt"):
+    print("Found saved model {}, continuing...".format("vae.pt"))
+    shutil.copyfile("vae.pt", "vae.pt.bak")
+    vae = torch.load("vae.pt")
+    print("Found model was already trained for {} steps".format(vae.steps_seen))
+    temperature = temperature_min
+    temperature_min = temperature_min
+    temperature_dec = 0.
 
+    kld_weight = kld_max
+    kld_inc = 0.
+
+    # change random seed and reshuffle the data, so that we don't repeat the same
+    # use hash of the weights and biases? try with float16 to avoid numerical issues in the tails...
+    new_seed = hash(tuple([hash(tuple(vae.state_dict()[k].cpu().numpy().ravel().astype("float16"))) for k, v in vae.state_dict().items()]))
+    # must be between 0 and 4294967295
+    new_seed = abs(new_seed) % 4294967295
+    print("Setting new random seed {}".format(new_seed))
+    random_state = np.random.RandomState(new_seed)
+    print("Reshuffling training data")
+    random_state.shuffle(pairs)
+
+optimizer = torch.optim.Adam(vae.parameters(), lr=learning_rate)
 criterion = nn.CrossEntropyLoss()
 
 
@@ -133,6 +156,7 @@ try:
     start_time = time.time()
     last_log_time = time.time() - log_every_n_seconds
     last_log_step = -log_every_n_steps - 1
+    start_steps = vae.steps_seen
     for step in range(n_steps):
         input, target = random_training_set()
         optimizer.zero_grad()
@@ -141,16 +165,14 @@ try:
         if temperature > temperature_min:
             temperature -= temperature_dec
 
-        loss = criterion(decoded, target)
+        ll_loss = criterion(decoded, target)
         #job.record(step, loss.data[0])
 
-        # free bits
-        full_KLD = 0.5 * (l - torch.pow(m, 2) - torch.exp(l) + 1)
-        KLD = -1. * torch.clamp(full_KLD.mean(), max=freebits_lambda).squeeze()
-
-
-        #KLD = (-0.5 * torch.sum(l - torch.pow(m, 2) - torch.exp(l) + 1, 1)).mean().squeeze()
-        loss += KLD * kld_weight
+        KLD = -0.5 * (2 * l - torch.pow(m, 2) - torch.pow(torch.exp(l), 2) + 1)
+        # ha bits , like free bits but over whole layer
+        clamp_KLD = torch.clamp(KLD.mean(), min=habits_lambda).squeeze()
+        #neg_KLD = -1 * clamp_KLD
+        loss = ll_loss + clamp_KLD * kld_weight
 
         if step > kld_start_inc and kld_weight < kld_max:
             kld_weight += kld_inc
@@ -163,12 +185,12 @@ try:
 
         def log_and_generate(tag, value):
             if tag == "step":
-                print('|%s|[%d] %.4f (k=%.4f, t=%.4f, kl=%.4f, ec=%.4f)' % (
-                    tag, value, loss.data[0], kld_weight, temperature, KLD.data[0], ec
+                print('|%s|[%d] %.4f (k=%.4f, t=%.4f, kl=%.4f, ckl=%.4f,  nll=%.4f, ec=%.4f)' % (
+                    tag, value, loss.data[0], kld_weight, temperature, KLD.data.mean(), clamp_KLD.data[0], ll_loss.data[0], ec
                 ))
             elif tag == "time":
-                print('|%s|[%.4f] %.4f (k=%.4f, t=%.4f, kl=%.4f, ec=%.4f)' % (
-                    tag, value, loss.data[0], kld_weight, temperature, KLD.data[0], ec
+                print('|%s|[%.4f] %.4f (k=%.4f, t=%.4f, kl=%.4f, ckl=%.4f, nll=%.4f,  ec=%.4f)' % (
+                    tag, value, loss.data[0], kld_weight, temperature, KLD.data.mean(), clamp_KLD.data[0], ll_loss.data[0], ec
                 ))
             inp_str = long_word_tensor_to_string(input_side, input)
             print('    (input {}) "{}"'.format(tag, inp_str))
@@ -194,7 +216,8 @@ try:
             log_and_generate("step", step)
             last_log_step = step
 
-        if step > 0 and step % save_every == 0:
+        if step > 0 and step % save_every == 0 or step == (n_steps - 1):
+            vae.steps_seen = start_steps + step
             save()
 
     save()
