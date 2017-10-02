@@ -18,11 +18,17 @@ Sampling Usage:
 Example output:
 
     ('(s0)', u'it had taken years to believe')
+   
     ('(z0)', ' it had taken time to his')
+    
     ('  .)', ' it had my hands to his')
+    
     ('  .)', ' but it was mad at his end')
+    
     ('  .)', ' but it was nt mad at his end')
+    
     ('(z1)', ' but it was all her at the end')
+    
     ('(s1)', u'but it was all lies at the end')
 
 
