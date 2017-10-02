@@ -10,10 +10,10 @@ import shutil
 encoder_hidden_size = 512
 n_encoder_layers = 2
 decoder_hidden_size = 512
-embed_size = 512
+embed_size = 128
 vocabulary_size = 20000
 learning_rate = 0.0001
-n_steps = 2200000
+n_steps = 1500000
 grad_clip = 10.0
 
 save_every = n_steps // 20
@@ -21,20 +21,20 @@ log_every_n_seconds = 5 * 60
 log_every_n_steps = 10000
 
 #kld_start_inc = 0 #.01 * n_steps
-kld_start_inc = 5000
+kld_start_inc = 10000
 kld_weight = 0.0
 kld_max = 1.0
-kld_inc = (kld_max - kld_weight) / 10000
+kld_inc = (kld_max - kld_weight) / (n_steps // 2)
 #kld_inc = 0.
 habits_lambda = .2
 
 word_dropout = 0.25
 
 temperature = 1.0
-temperature_min = 1.0
-# should get to the temperature around 80% through training, then hold
-#temperature_dec = (temperature - temperature_min) / (0.8 * n_steps)
-temperature_dec = 0.
+temperature_min = .75
+# should get to the temperature around 50% through training, then hold
+temperature_dec = (temperature - temperature_min) / (0.5 * n_steps)
+#temperature_dec = 0.
 USE_CUDA = True
 
 
