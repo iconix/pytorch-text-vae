@@ -5,9 +5,11 @@ Based on code from Sean Robertson (``@spro``) ``https://github.com/spro/pytorch-
 This code doesn't implement iterative conditional modes for sampling, or several other details of the original paper. The resulting interpolations in this recreation seem less grammatically accurate than those presented in the paper, though the overall result is similar.
 
 To get a saved model, and preprocessed data, download the file (~1.1GB) at this link
+
 ``https://drive.google.com/file/d/0Bzz1g90lrPKNZTVtSHFDM0t0cG8/view?usp=sharing``
 
 Next, run this command to unzip the pretrained models and preprocessed data
+
 ``tar xzf stored_pytorch_text_vae_info.tar.gz``
 
 The pretrained model was trained on the Book Corpus dataset (``http://yknzhu.wixsite.com/mbweb``).
