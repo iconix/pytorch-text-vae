@@ -3,7 +3,7 @@ import os
 import numpy as np
 from model import *
 from datasets import get_vocabulary, prepare_pair_data
-import cPickle as pickle
+import dill as pickle
 import shutil
 
 
@@ -37,6 +37,7 @@ temperature_dec = (temperature - temperature_min) / (0.5 * n_steps)
 #temperature_dec = 0.
 USE_CUDA = True
 
+TMP_PATH = "tmp" + os.sep
 
 # Training
 # ------------------------------------------------------------------------------
@@ -45,30 +46,33 @@ if len(sys.argv) < 2:
     print("Usage: python train.py [filename]")
     sys.exit(1)
 
-reverse = True
-csv = False
-if sys.argv[1].endswith(".csv"):
-    csv = True
+reverse = True # TODO: why always True? is this why UNK is revered to KNU?
 
+filename = sys.argv[1].split(os.sep)[-1].split(".")[0]
 if sys.argv[1].endswith(".pkl"):
-    cache_path = sys.argv[1]
+    cache_path = os.path.join(*sys.argv[1].split(os.sep)[:-1])
+    cache_file =  os.path.join(cache_path, filename)
 else:
-    tmp_path = "/Tmp/kastner/"
-    cache_path = tmp_path + sys.argv[1].split(os.sep)[-1].split(".")[0] + "_stored_info.pkl"
+    cache_path = TMP_PATH
+    cache_file =  os.path.join(cache_path, filename + "_stored_info.pkl")
 
-if not os.path.exists(cache_path):
-    print("Cached info at {} not found".format(cache_path))
+if not os.path.exists(cache_file):
+    print("Cached info at {} not found".format(cache_file))
     print("Creating cache... this may take some time")
-    input_side, output_side, pairs = prepare_pair_data(sys.argv[1], vocabulary_size, reverse, csv)
-    with open(cache_path, "wb") as f:
+    input_side, output_side, pairs = prepare_pair_data(sys.argv[1], vocabulary_size, TMP_PATH, reverse)
+
+    if not os.path.exists(cache_path):
+        os.mkdir(cache_path)
+
+    with open(cache_file, "wb") as f:
         pickle.dump((input_side, output_side, pairs), f)
 else:
     start_load = time.time()
-    print("Fetching cached info at {}".format(cache_path))
-    with open(cache_path, "rb") as f:
+    print("Fetching cached info at {}".format(cache_file))
+    with open(cache_file, "rb") as f:
         input_side, output_side, pairs = pickle.load(f)
     end_load = time.time()
-    print("Cache {} loaded, total load time {}".format(cache_path, end_load - start_load))
+    print("Cache {} loaded, total load time {}".format(cache_file, end_load - start_load))
 
 random_state = np.random.RandomState(1999)
 random_state.shuffle(pairs)
@@ -131,22 +135,8 @@ if USE_CUDA:
     criterion.cuda()
     print("Using CUDA!")
 
-
-"""
-save_every = 5000
-job = sconce.Job('vae', {
-    'hidden_size': hidden_size,
-    'embed_size': embed_size,
-    'learning_rate': learning_rate,
-    'kld_weight': kld_weight,
-    'temperature': temperature,
-    'grad_clip': grad_clip,
-})
-
-job.log_every = log_every
-"""
-
 def save():
+    # TODO: https://pytorch.org/docs/stable/notes/serialization.html#recommend-saving-models
     save_filename = 'vae.pt'
     torch.save(vae, save_filename)
     print('Saved as %s' % save_filename)
@@ -179,18 +169,18 @@ try:
 
         loss.backward()
         # print('from', next(vae.parameters()).grad.data[0][0])
-        ec = torch.nn.utils.clip_grad_norm(vae.parameters(), grad_clip)
+        ec = torch.nn.utils.clip_grad_norm_(vae.parameters(), grad_clip)
         # print('to  ', next(vae.parameters()).grad.data[0][0])
         optimizer.step()
 
         def log_and_generate(tag, value):
             if tag == "step":
                 print('|%s|[%d] %.4f (k=%.4f, t=%.4f, kl=%.4f, ckl=%.4f,  nll=%.4f, ec=%.4f)' % (
-                    tag, value, loss.data[0], kld_weight, temperature, KLD.data.mean(), clamp_KLD.data[0], ll_loss.data[0], ec
+                    tag, value, loss.item(), kld_weight, temperature, KLD.data.mean(), clamp_KLD.item(), ll_loss.item(), ec
                 ))
             elif tag == "time":
                 print('|%s|[%.4f] %.4f (k=%.4f, t=%.4f, kl=%.4f, ckl=%.4f, nll=%.4f,  ec=%.4f)' % (
-                    tag, value, loss.data[0], kld_weight, temperature, KLD.data.mean(), clamp_KLD.data[0], ll_loss.data[0], ec
+                    tag, value, loss.item(), kld_weight, temperature, KLD.data.mean(), clamp_KLD.item(), ll_loss.item(), ec
                 ))
             inp_str = long_word_tensor_to_string(input_side, input)
             print('    (input {}) "{}"'.format(tag, inp_str))

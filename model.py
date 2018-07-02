@@ -204,6 +204,9 @@ class DecoderRNN(nn.Module):
             else:
                 input, top_i = self.sample(output, temperature)
 
+            if input.dim() == 0:
+                input = input.unsqueeze(0)
+
         return outputs.squeeze(1)
 
     def generate(self, z, n_steps, temperature):

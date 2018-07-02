@@ -9,7 +9,7 @@ try:
 except ImportError:
     import queue as Queue
 import multiprocessing as mp
-import cPickle as pickle
+import dill as pickle
 
 import numpy as np
 import re
@@ -24,11 +24,6 @@ UNK_token = 2
 N_CORE = 24
 
 
-def read_file(filename):
-    file = unidecode.unidecode(open(filename).read())
-    return file, len(file)
-
-
 def read_file_line_gen(filename):
     with open(filename) as f:
         for line in f:
@@ -37,6 +32,13 @@ def read_file_line_gen(filename):
 
 norvig_list = None
 # http://norvig.com/ngrams/count_1w.txt
+# TODO: replace with spacy tokenization? or is it better to stick to common words?
+'''
+words turned to UNK:
+- catchy
+- "seabird" (in list, but maybe quotes threw it off?)
+- beige, spunk (in list though?)
+'''
 def get_vocabulary():
     global norvig_list
     global reverse_norvig_list
@@ -50,7 +52,7 @@ def get_vocabulary():
 # Turn a Unicode string to plain ASCII, thanks to http://stackoverflow.com/a/518232/2809427
 def unicode_to_ascii(s):
     return ''.join(
-        c for c in unicodedata.normalize(u'NFD', unicode(s))
+        c for c in unicodedata.normalize(u'NFD', s)
         if unicodedata.category(c) != u'Mn'
     )
 
@@ -80,12 +82,14 @@ class Lang:
         self.word2index = {v: k for k, v in enumerate(self.vocabulary)}
         self.index2word = {v: k for k, v in self.word2index.items()}
         self.n_words = len(self.vocabulary) # Count SOS, EOS, UNK
-        self.words = self.word2index.keys()
-        self.indices = self.index2word.keys()
+        # dict.keys() do not pickle in Python 3.x - convert to list
+        # https://groups.google.com/d/msg/pyomo-forum/XOf6zwvEbt4/ZfkbHzvDBgAJ
+        self.words = list(self.word2index.keys())
+        self.indices = list(self.index2word.keys())
 
     def index_to_word(self, index):
         try:
-            return self.index2word[index]
+            return self.index2word[index.item()]
         except KeyError:
             return self.index2word[self.word2index["UNK"]]
 
@@ -131,7 +135,7 @@ reverse_words = None
 def unk_func():
     return "UNK"
 
-def _setup(filepath, vocabulary_size, csv):
+def _setup(filepath, vocabulary_size):
     global words
     global reverse_words
     wc = collections.Counter()
@@ -193,18 +197,17 @@ def process(q, oq, iolock):
 
 
 # https://stackoverflow.com/questions/43078980/python-multiprocessing-with-generator
-def prepare_pair_data(path, vocabulary_size, reverse=False, csv=False):
+def prepare_pair_data(path, vocabulary_size, tmp_path, reverse=False):
     print("Reading lines...")
+    print(f'MIN_LENGTH: {MIN_LENGTH}; MAX_LENGTH: {MAX_LENGTH}')
     pkl_path = path.split(os.sep)[-1].split(".")[0] + "_vocabulary.pkl"
-    vocab_cache_path = "/Tmp/kastner/" + pkl_path
+    vocab_cache_path = tmp_path + pkl_path
     global words
     global reverse_words
     if not os.path.exists(vocab_cache_path):
         print("Vocabulary cache {} not found".format(vocab_cache_path))
         print("Prepping vocabulary")
-        # Read the file and split into lines
-        #f, flen = read_file(path)
-        _setup(path, vocabulary_size, csv)
+        _setup(path, vocabulary_size)
         with open(vocab_cache_path, "wb") as f:
             pickle.dump((words, reverse_words), f)
     else:
