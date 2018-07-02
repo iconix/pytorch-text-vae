@@ -1,3 +1,7 @@
+This fork simply updates compatibility to Python 3 and PyTorch 0.4.
+
+---
+
 An partial reimplementation of "Generating Sentences From a Continuous Space", Bowman, Vilnis, Vinyals, Dai, Jozefowicz, Bengio (``https://arxiv.org/abs/1511.06349``). 
 
 Based on code from Sean Robertson (``@spro``) ``https://github.com/spro/pytorch-text-vae``, adapted to word level as in the original paper.
