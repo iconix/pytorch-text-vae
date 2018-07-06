@@ -4,6 +4,7 @@ from torch.autograd import Variable
 import torch.nn.functional as F
 from datasets import *
 
+USE_CUDA = True
 MAX_SAMPLE = False
 MAX_SAMPLE = True
 model_random_state = np.random.RandomState(1988)

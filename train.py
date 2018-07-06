@@ -6,7 +6,7 @@ import shutil
 from datasets import get_vocabulary, prepare_pair_data
 from model import *
 
-def train_lm(data_path, tmp_path=f'tmp{os.sep}',
+def train_vae(data_path, tmp_path=f'tmp{os.sep}',
                 encoder_hidden_size=512, n_encoder_layers=2, decoder_hidden_size=512, embed_size=128,
                 max_vocab=-1, lr=0.0001, n_steps=1500000, grad_clip=10.0,
                 save_every=None, log_every_n_seconds=5*60, log_every_n_steps=1000,
@@ -33,10 +33,11 @@ def train_lm(data_path, tmp_path=f'tmp{os.sep}',
     if not os.path.exists(cache_file):
         print("Cached info at {} not found".format(cache_file))
         print("Creating cache... this may take some time")
-        input_side, output_side, pairs = prepare_pair_data(data_path, max_vocab, tmp_path, min_gen_len, max_gen_len, reverse=True)
 
         if not os.path.exists(cache_path):
             os.mkdir(cache_path)
+
+        input_side, output_side, pairs = prepare_pair_data(data_path, max_vocab, tmp_path, min_gen_len, max_gen_len, reverse=True)
 
         with open(cache_file, "wb") as f:
             pickle.dump((input_side, output_side, pairs, embed_size, decoder_hidden_size, encoder_hidden_size, n_encoder_layers), f)
@@ -171,7 +172,7 @@ def train_lm(data_path, tmp_path=f'tmp{os.sep}',
                     z = torch.randn(embed_size).unsqueeze(0)
                     if use_cuda:
                         z = z.cuda()
-                    generated = vae.decoder.generate(z, max_gen_len, temperature)
+                    generated = vae.decoder.generate(z, max_gen_len, temperature, use_cuda)
                     generated_str = float_word_tensor_to_string(output_side, generated)
 
                     if generated_str.endswith(EOS_str):
@@ -184,7 +185,7 @@ def train_lm(data_path, tmp_path=f'tmp{os.sep}',
                     inp_str = long_word_tensor_to_string(input_side, input)
                     print('    (input/target {}) "{}"'.format(tag, inp_str))
 
-                    generated = vae.decoder.generate(z, max_gen_len, temperature)
+                    generated = vae.decoder.generate(z, max_gen_len, temperature, use_cuda)
                     generated_str = float_word_tensor_to_string(output_side, generated)
                     if generated_str.endswith(EOS_str):
                         generated_str = generated_str[:-5]
