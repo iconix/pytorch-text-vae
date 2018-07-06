@@ -1,4 +1,7 @@
-This fork simply updates compatibility to Python 3 and PyTorch 0.4.
+Changes in this fork: 
+- Update compatibility to Python 3 and PyTorch 0.4
+- Add `generate.py` for sampling
+- Some code cleanup
 
 ---
 
