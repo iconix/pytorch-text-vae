@@ -17,7 +17,6 @@ import unidecode
 import unicodedata
 import collections
 
-USE_CUDA = True
 SOS_token = 0
 EOS_token = 1
 UNK_token = 2
@@ -33,11 +32,8 @@ def read_file_line_gen(filename):
 norvig_list = None
 # http://norvig.com/ngrams/count_1w.txt
 # TODO: replace with spacy tokenization? or is it better to stick to common words?
-'''
-words turned to UNK:
-- catchy
-- "seabird" (in list, but maybe quotes threw it off?)
-- beige, spunk (in list though?)
+'''Things turned to UNK:
+- numbers
 '''
 def get_vocabulary():
     global norvig_list
@@ -69,15 +65,22 @@ def normalize_string(s):
 
 
 class Lang:
-    def __init__(self, name, vocabulary_size, reverse=False):
+    def __init__(self, name, vocabulary_size=-1, reverse=False):
         self.name = name
         if reverse:
-            self.vocabulary = ["SOS", "EOS", "UNK"] + [w[0][::-1] for w in get_vocabulary()]
+            self.vocabulary = [w[::-1] for w in ["SOS", "EOS", "UNK"]] + [w[0][::-1] for w in get_vocabulary()]
         else:
             self.vocabulary = ["SOS", "EOS", "UNK"] + [w[0] for w in get_vocabulary()]
 
+        if vocabulary_size < 0:
+            vocabulary_size = len(self.vocabulary)
+
         self.reverse = reverse
         self.vocabulary_size = vocabulary_size
+        if vocabulary_size < len(self.vocabulary):
+            print(f"Trimming vocabulary size from {len(self.vocabulary)} to {vocabulary_size}")
+        else:
+            print(f"Vocabulary size: {vocabulary_size}")
         self.vocabulary = self.vocabulary[:vocabulary_size]
         self.word2index = {v: k for k, v in enumerate(self.vocabulary)}
         self.index2word = {v: k for k, v in self.word2index.items()}
@@ -91,53 +94,49 @@ class Lang:
         try:
             return self.index2word[index.item()]
         except KeyError:
-            return self.index2word[self.word2index["UNK"]]
+            return self.index2word[self.word2index[self.vocabulary[UNK_token]]]
 
     def word_to_index(self, word):
         try:
             return self.word2index[word.lower()]
         except KeyError:
-            return self.word2index["UNK"]
+            #print(f"[WARNING] {word.lower()}")
+            return self.word2index[self.vocabulary[UNK_token]]
 
     def word_check(self, word):
         if word in self.word2index.keys():
             return word
         else:
-            return "UNK"
+            return self.word2index[self.vocabulary[UNK_token]]
 
     def process_sentence(self, sentence, normalize=True):
         if normalize:
             s = normalize_string(sentence)
         else:
             s = sentence
-        return " ".join([w if w in self.words else "UNK" for w in s.split(" ")])
-
-
-MIN_LENGTH = 5
-MAX_LENGTH = 15
-
+        return " ".join([w if w in self.words else self.word2index[self.vocabulary[UNK_token]] for w in s.split(" ")])
 
 def filter_pair(p):
     return MIN_LENGTH < len(p[0].split(' ')) < MAX_LENGTH and MIN_LENGTH < len(p[1].split(' ')) < MAX_LENGTH
 
 
 def process_input_side(s):
-    return " ".join([words[w] for w in s.split(" ")])
+    return " ".join([WORDS[w] for w in s.split(" ")])
 
 
 def process_output_side(s):
-    return " ".join([reverse_words[w] for w in s.split(" ")])
+    return " ".join([REVERSE_WORDS[w] for w in s.split(" ")])
 
 
-words = None
-reverse_words = None
+WORDS = None
+REVERSE_WORDS = None
 
 def unk_func():
     return "UNK"
 
 def _setup(filepath, vocabulary_size):
-    global words
-    global reverse_words
+    global WORDS
+    global REVERSE_WORDS
     wc = collections.Counter()
     for n, line in enumerate(read_file_line_gen(filepath)):
         if n % 100000 == 0:
@@ -146,20 +145,20 @@ def _setup(filepath, vocabulary_size):
         l = line.strip().lstrip().rstrip()
         if MIN_LENGTH < len(l.split(' ')) < MAX_LENGTH:
             l = normalize_string(l)
-            words = l.split(" ")
-            wc.update(words)
+            WORDS = l.split(" ")
+            wc.update(WORDS)
         else:
             continue
     the_words = ["SOS", "EOS", "UNK"]
-    the_reverse_words = ["SOS", "EOS", "UNK"]
+    the_reverse_words = [w[::-1] for w in ["SOS", "EOS", "UNK"]]
     the_words += [wi[0] for wi in wc.most_common()[:vocabulary_size - 3]]
     the_reverse_words += [wi[0][::-1] for wi in wc.most_common()[:vocabulary_size - 3]]
 
-    words = collections.defaultdict(unk_func)
-    reverse_words = collections.defaultdict(unk_func)
+    WORDS = collections.defaultdict(unk_func)
+    REVERSE_WORDS = collections.defaultdict(unk_func)
     for k in range(len(the_words)):
-        words[the_words[k]] = the_words[k]
-        reverse_words[the_reverse_words[k]] = the_reverse_words[k]
+        WORDS[the_words[k]] = the_words[k]
+        REVERSE_WORDS[the_reverse_words[k]] = the_reverse_words[k]
 
 
 def proc_line(line, reverse):
@@ -197,26 +196,30 @@ def process(q, oq, iolock):
 
 
 # https://stackoverflow.com/questions/43078980/python-multiprocessing-with-generator
-def prepare_pair_data(path, vocabulary_size, tmp_path, reverse=False):
+def prepare_pair_data(path, vocabulary_size, tmp_path, min_length, max_length, reverse=False):
+    global MIN_LENGTH
+    global MAX_LENGTH
+    MIN_LENGTH, MAX_LENGTH = min_length, max_length
+
     print("Reading lines...")
     print(f'MIN_LENGTH: {MIN_LENGTH}; MAX_LENGTH: {MAX_LENGTH}')
     pkl_path = path.split(os.sep)[-1].split(".")[0] + "_vocabulary.pkl"
     vocab_cache_path = tmp_path + pkl_path
-    global words
-    global reverse_words
+    global WORDS
+    global REVERSE_WORDS
     if not os.path.exists(vocab_cache_path):
         print("Vocabulary cache {} not found".format(vocab_cache_path))
         print("Prepping vocabulary")
         _setup(path, vocabulary_size)
         with open(vocab_cache_path, "wb") as f:
-            pickle.dump((words, reverse_words), f)
+            pickle.dump((WORDS, REVERSE_WORDS), f)
     else:
         print("Vocabulary cache {} found".format(vocab_cache_path))
         print("Loading...".format(vocab_cache_path))
         with open(vocab_cache_path, "rb") as f:
             r = pickle.load(f)
-        words = r[0]
-        reverse_words = r[1]
+        WORDS = r[0]
+        REVERSE_WORDS = r[1]
     print("Vocabulary prep complete")
 
 

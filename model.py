@@ -4,8 +4,6 @@ from torch.autograd import Variable
 import torch.nn.functional as F
 from datasets import *
 
-MIN_LENGTH = 10
-MAX_LENGTH = 50
 MAX_SAMPLE = False
 MAX_SAMPLE = True
 model_random_state = np.random.RandomState(1988)
@@ -64,14 +62,14 @@ def word_tensor(lang, string):
 
 
 def index_to_word(lang, top_i):
-    if top_i == EOS_token:
-        return 'EOS' + " "
-    elif top_i == SOS_token:
-        return 'SOS' + " "
-    elif top_i == UNK_token:
-        return 'UNK' + " "
-    else:
-        return lang.index_to_word(top_i) + " "
+    #if top_i == EOS_token:
+    #    return 'EOS' + " "
+    #elif top_i == SOS_token:
+    #    return 'SOS' + " "
+    #elif top_i == UNK_token:
+    #    return 'UNK' + " "
+    #else:
+    return lang.index_to_word(top_i) + " "
 
 
 def long_word_tensor_to_string(lang, t):
@@ -209,7 +207,10 @@ class DecoderRNN(nn.Module):
 
         return outputs.squeeze(1)
 
-    def generate(self, z, n_steps, temperature):
+    def generate(self, z, n_steps, temperature, use_cuda):
+        global USE_CUDA
+        USE_CUDA = use_cuda
+
         outputs = Variable(torch.zeros(n_steps, 1, self.output_size))
         if USE_CUDA:
             outputs = outputs.cuda()
