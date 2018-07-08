@@ -35,6 +35,9 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    args_passed = locals()['args']
+    print(args_passed)
+
     stored_info = args.stored_info.split(os.sep)[-1]
     cache_file =  os.path.join(args.cache_path, stored_info)
 

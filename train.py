@@ -14,6 +14,8 @@ def train_vae(data_path, tmp_path=f'tmp{os.sep}',
                 word_dropout=0.25, temperature=1.0, temperature_min=0.75,
                 use_cuda=True, generate_samples=True, generate_interpolations=True, min_gen_len=10, max_gen_len=200):
 
+    args_passed = locals()
+    print(args_passed)
 
     kld_inc = (kld_max - kld_weight) / (n_steps // 2)
     # should get to the temperature around 50% through training, then hold
@@ -169,20 +171,22 @@ def train_vae(data_path, tmp_path=f'tmp{os.sep}',
                 EOS_str = f' {output_side.index_to_word(torch.LongTensor([EOS_token]))} '
 
                 if generate_samples:
-                    z = torch.randn(embed_size).unsqueeze(0)
+                    rand_z = torch.randn(embed_size).unsqueeze(0)
                     if use_cuda:
-                        z = z.cuda()
-                    generated = vae.decoder.generate(z, max_gen_len, temperature, use_cuda)
+                        rand_z = rand_z.cuda()
+                    generated = vae.decoder.generate(rand_z, max_gen_len, temperature, use_cuda)
                     generated_str = float_word_tensor_to_string(output_side, generated)
 
                     if generated_str.endswith(EOS_str):
                         generated_str = generated_str[:-5]
 
                     # flip it back
-                    print('(sample {}) "{}"'.format(tag, generated_str[::-1]))
+                    print('----')
+                    print('    (sample {}) "{}"'.format(tag, generated_str[::-1]))
 
                 if generate_interpolations:
                     inp_str = long_word_tensor_to_string(input_side, input)
+                    print('----')
                     print('    (input/target {}) "{}"'.format(tag, inp_str))
 
                     generated = vae.decoder.generate(z, max_gen_len, temperature, use_cuda)
@@ -191,8 +195,8 @@ def train_vae(data_path, tmp_path=f'tmp{os.sep}',
                         generated_str = generated_str[:-5]
 
                     # flip it back
-                    print('(interpolation {}) "{}"'.format(tag, generated_str[::-1]))
-                    print('')
+                    print('    (interpolation {}) "{}"'.format(tag, generated_str[::-1]))
+                    print('----')
 
             if last_log_time <= time.time() - log_every_n_seconds:
                 log_and_generate("time", time.time() - start_time)
