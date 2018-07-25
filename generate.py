@@ -50,17 +50,17 @@ if __name__ == "__main__":
 
     saved_vae = args.saved_vae.split(os.sep)[-1]
     if os.path.exists(args.saved_vae):
-        print("Found saved model {}".format(saved_vae))
+        print("Found saved model {}".format(args.saved_vae))
 
-        if saved_vae.endswith("_state.pt"):
+        if args.saved_vae.endswith("_state.pt"):
             e = model.EncoderRNN(input_side.n_words, ENCODER_HIDDEN_SIZE, EMBED_SIZE, N_ENCODER_LAYERS, bidirectional=True)
             d = model.DecoderRNN(EMBED_SIZE, DECODER_HIDDEN_SIZE, input_side.n_words, 1, word_dropout=0)
             vae = model.VAE(e, d)
             if args.use_cuda:
                 vae = vae.cuda()
-            vae.load_state_dict(torch.load(saved_vae))
+            vae.load_state_dict(torch.load(args.saved_vae))
         else:
-            vae = torch.load(saved_vae)
+            vae = torch.load(args.saved_vae)
             print("Trained for {} steps".format(vae.steps_seen))
 
         print("Setting new random seed")

@@ -161,7 +161,7 @@ class DecoderRNN(nn.Module):
     def sample(self, output, temperature):
         if MAX_SAMPLE:
             # Sample top value only
-            top_i = output.data.topk(1)[1][0][0]
+            top_i = output.data.topk(1)[1].item()
 
         else:
             # Sample from the network as a multinomial distribution
