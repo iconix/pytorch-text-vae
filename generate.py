@@ -20,8 +20,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='pytorch-text-vae:generate')
     parser.add_argument('saved_vae', metavar='SAVED_VAE', help='saved PyTorch vae model')
     parser.add_argument('stored_info', metavar='STORED_INFO', help='pkl of stored info')
-    parser.add_argument('--cache-path', default=str(Path('tmp/')), metavar='CACHE',
-                        help='cache path (default: tmp/)')
+    parser.add_argument('--cache-path', default=str(Path('tmp')), metavar='CACHE',
+                        help='cache path (default: tmp)')
     parser.add_argument('--max-length', type=int, default=50, metavar='LEN',
                         help='max num words per sample (default: 50)')
     parser.add_argument('--num-sample', type=int, default=10, metavar='NS',
@@ -30,8 +30,16 @@ if __name__ == "__main__":
                         help='seed for random number generator (default: None)')
     parser.add_argument('--temp', type=float, default=0.75, metavar='T',
                         help='sample temperature (default: 0.75)')
-    parser.add_argument('--use-cuda', type=bool, default=True, metavar='CUDA',
-                        help='use cuda (default: True)')
+
+    cuda_parser = parser.add_mutually_exclusive_group(required=False)
+    cuda_parser.add_argument('--cuda', dest='use_cuda', action='store_true')
+    cuda_parser.add_argument('--no-cuda', dest='use_cuda', action='store_false')
+
+    prn_z_parser = parser.add_mutually_exclusive_group(required=False)
+    prn_z_parser.add_argument('--print-z', dest='print_z', action='store_true')
+    prn_z_parser.add_argument('--no-print-z', dest='print_z', action='store_false')
+
+    parser.set_defaults(use_cuda=True, print_z=False)
 
     args = parser.parse_args()
 
@@ -48,7 +56,6 @@ if __name__ == "__main__":
     end_load = time.time()
     print("Cache {} loaded, total load time {}".format(cache_file, end_load - start_load))
 
-    saved_vae = args.saved_vae.split(os.sep)[-1]
     if os.path.exists(args.saved_vae):
         print("Found saved model {}".format(args.saved_vae))
 
@@ -72,6 +79,8 @@ if __name__ == "__main__":
             new_seed = args.seed
         torch.manual_seed(new_seed)
 
+        gens = []
+        zs = []
         for i in range(args.num_sample):
             z = torch.randn(EMBED_SIZE).unsqueeze(0)
             if args.use_cuda:
@@ -89,3 +98,7 @@ if __name__ == "__main__":
 
             print('---')
             print(generated_str)
+            gens.append(generated_str)
+            zs.append(z)
+            if args.print_z:
+                print(z)

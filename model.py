@@ -6,7 +6,7 @@ from datasets import *
 
 USE_CUDA = True
 MAX_SAMPLE = False
-MAX_SAMPLE = True
+TRUNCATED_SAMPLE = True
 model_random_state = np.random.RandomState(1988)
 torch.manual_seed(1999)
 
@@ -156,15 +156,21 @@ class DecoderRNN(nn.Module):
         self.i2h = nn.Linear(hidden_size + input_size, hidden_size)
         self.h2o = nn.Linear(hidden_size * 2, hidden_size)
         self.out = nn.Linear(hidden_size + input_size, output_size)
-        #self.out = nn.Linear(hidden_size, output_size)
 
-    def sample(self, output, temperature):
-        if MAX_SAMPLE:
+        print(f'MAX_SAMPLE: {MAX_SAMPLE}; TRUNCATED_SAMPLE: {TRUNCATED_SAMPLE}')
+
+    def sample(self, output, temperature, max_sample=MAX_SAMPLE, trunc_sample=TRUNCATED_SAMPLE):
+        if max_sample:
             # Sample top value only
             top_i = output.data.topk(1)[1].item()
 
         else:
             # Sample from the network as a multinomial distribution
+            if trunc_sample:
+                # Sample from top k values only
+                k = 10
+                output = output[:k]
+
             output_dist = output.data.view(-1).div(temperature).exp()
             top_i = torch.multinomial(output_dist, 1)[0]
 
@@ -208,7 +214,7 @@ class DecoderRNN(nn.Module):
 
         return outputs.squeeze(1)
 
-    def generate(self, z, n_steps, temperature, use_cuda):
+    def generate(self, z, n_steps, temperature, use_cuda, max_sample=MAX_SAMPLE, trunc_sample=TRUNCATED_SAMPLE):
         global USE_CUDA
         USE_CUDA = use_cuda
 
@@ -224,7 +230,7 @@ class DecoderRNN(nn.Module):
         for i in range(n_steps):
             output, hidden = self.step(i, z, input, hidden)
             outputs[i] = output
-            input, top_i = self.sample(output, temperature)
+            input, top_i = self.sample(output, temperature, max_sample=MAX_SAMPLE, trunc_sample=TRUNCATED_SAMPLE)
             #if top_i == EOS: break
         return outputs.squeeze(1)
 
