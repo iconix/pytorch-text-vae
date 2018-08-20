@@ -46,6 +46,8 @@ if __name__ == "__main__":
     args_passed = locals()['args']
     print(args_passed)
 
+    DEVICE = torch.device(f'cuda:{torch.cuda.current_device()}' if torch.cuda.is_available() and args.use_cuda else 'cpu')
+
     stored_info = args.stored_info.split(os.sep)[-1]
     cache_file =  os.path.join(args.cache_path, stored_info)
 
@@ -63,8 +65,7 @@ if __name__ == "__main__":
             e = model.EncoderRNN(input_side.n_words, ENCODER_HIDDEN_SIZE, EMBED_SIZE, N_ENCODER_LAYERS, bidirectional=True)
             d = model.DecoderRNN(EMBED_SIZE, DECODER_HIDDEN_SIZE, input_side.n_words, 1, word_dropout=0)
             vae = model.VAE(e, d)
-            if args.use_cuda:
-                vae = vae.cuda()
+            vae.to(DEVICE)
             vae.load_state_dict(torch.load(args.saved_vae))
         else:
             vae = torch.load(args.saved_vae)
@@ -82,10 +83,8 @@ if __name__ == "__main__":
         gens = []
         zs = []
         for i in range(args.num_sample):
-            z = torch.randn(EMBED_SIZE).unsqueeze(0)
-            if args.use_cuda:
-                z = z.cuda()
-            generated = vae.decoder.generate(z, args.max_length, args.temp, args.use_cuda)
+            z = torch.randn(EMBED_SIZE).unsqueeze(0).to(DEVICE)
+            generated = vae.decoder.generate(z, args.max_length, args.temp, DEVICE)
             generated_str = model.float_word_tensor_to_string(output_side, generated)
 
             EOS_str = f' {output_side.index_to_word(torch.LongTensor([EOS_token]))} '

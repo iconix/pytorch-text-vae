@@ -4,7 +4,6 @@ from torch.autograd import Variable
 import torch.nn.functional as F
 from datasets import *
 
-USE_CUDA = True
 MAX_SAMPLE = False
 TRUNCATED_SAMPLE = True
 model_random_state = np.random.RandomState(1988)
@@ -57,8 +56,6 @@ def word_tensor(lang, string):
         tensor[c] = lang.word_to_index(split_string[c])
     tensor[-1] = EOS_token
     tensor = Variable(tensor)
-    if USE_CUDA:
-        tensor = tensor.cuda()
     return tensor
 
 
@@ -94,10 +91,8 @@ def float_word_tensor_to_string(lang, t):
 
 
 class Encoder(nn.Module):
-    def sample(self, mu, logvar):
-        eps = Variable(torch.randn(mu.size()))
-        if USE_CUDA:
-            eps = eps.cuda()
+    def sample(self, mu, logvar, device):
+        eps = Variable(torch.randn(mu.size())).to(device)
         std = torch.exp(logvar / 2.0)
         return mu + eps * std
 
@@ -119,7 +114,7 @@ class EncoderRNN(Encoder):
         self.gru = nn.GRU(hidden_size, hidden_size, n_layers, dropout=0.1, bidirectional=bidirectional)
         self.o2p = nn.Linear(hidden_size, output_size * 2)
 
-    def forward(self, input):
+    def forward(self, input, device):
         embedded = self.embed(input).unsqueeze(1)
 
         output, hidden = self.gru(embedded, None)
@@ -133,7 +128,7 @@ class EncoderRNN(Encoder):
 
         ps = self.o2p(output)
         mu, logvar = torch.chunk(ps, 2, dim=1)
-        z = self.sample(mu, logvar)
+        z = self.sample(mu, logvar, device)
         return mu, logvar, z
 
 # Decoder
@@ -142,24 +137,23 @@ class EncoderRNN(Encoder):
 # Decode from Z into sequence
 
 class DecoderRNN(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, n_layers=1, word_dropout=1.):
+    def __init__(self, z_size, condition_size, hidden_size, output_size, n_layers=1, word_dropout=1.):
         super(DecoderRNN, self).__init__()
-        self.input_size = input_size
-        self.hidden_size = hidden_size
         self.output_size = output_size
         self.n_layers = n_layers
         self.word_dropout = word_dropout
 
+        input_size = z_size + condition_size
+
         self.embed = nn.Embedding(output_size, hidden_size)
         self.gru = nn.GRU(hidden_size + input_size, hidden_size, n_layers)
-        self.z2h = nn.Linear(input_size, hidden_size)
-        self.i2h = nn.Linear(hidden_size + input_size, hidden_size)
+        self.i2h = nn.Linear(input_size, hidden_size)
         self.h2o = nn.Linear(hidden_size * 2, hidden_size)
         self.out = nn.Linear(hidden_size + input_size, output_size)
 
         print(f'MAX_SAMPLE: {MAX_SAMPLE}; TRUNCATED_SAMPLE: {TRUNCATED_SAMPLE}')
 
-    def sample(self, output, temperature, max_sample=MAX_SAMPLE, trunc_sample=TRUNCATED_SAMPLE):
+    def sample(self, output, temperature, device, max_sample=MAX_SAMPLE, trunc_sample=TRUNCATED_SAMPLE):
         if max_sample:
             # Sample top value only
             top_i = output.data.topk(1)[1].item()
@@ -174,32 +168,25 @@ class DecoderRNN(nn.Module):
             output_dist = output.data.view(-1).div(temperature).exp()
             top_i = torch.multinomial(output_dist, 1)[0]
 
-        input = Variable(torch.LongTensor([top_i]))
-        if USE_CUDA:
-            input = input.cuda()
+        input = Variable(torch.LongTensor([top_i])).to(device)
         return input, top_i
 
-    def forward(self, z, inputs, temperature):
+    def forward(self, z, condition, inputs, temperature, device):
         n_steps = inputs.size(0)
-        outputs = Variable(torch.zeros(n_steps, 1, self.output_size))
-        if USE_CUDA:
-            outputs = outputs.cuda()
+        outputs = Variable(torch.zeros(n_steps, 1, self.output_size)).to(device)
 
-        input = Variable(torch.LongTensor([SOS_token]))
-        if USE_CUDA:
-            input = input.cuda()
+        input = Variable(torch.LongTensor([SOS_token])).to(device)
 
-        hidden = self.z2h(z).unsqueeze(0).repeat(self.n_layers, 1, 1)
+        decode_embed = torch.cat([z, condition], 1)
+        hidden = self.i2h(decode_embed).unsqueeze(0).repeat(self.n_layers, 1, 1)
 
         for i in range(n_steps):
-            output, hidden = self.step(i, z, input, hidden)
+            output, hidden = self.step(i, decode_embed, input, hidden)
             outputs[i] = output
 
             use_word_dropout = model_random_state.rand() < self.word_dropout
             if use_word_dropout and i < (n_steps - 1):
-                unk_input = Variable(torch.LongTensor([UNK_token]))
-                if USE_CUDA:
-                    unk_input = unk_input.cuda()
+                unk_input = Variable(torch.LongTensor([UNK_token])).to(device)
                 input = unk_input
                 continue
 
@@ -207,41 +194,35 @@ class DecoderRNN(nn.Module):
             if use_teacher_forcing:
                 input = inputs[i]
             else:
-                input, top_i = self.sample(output, temperature)
+                input, top_i = self.sample(output, temperature, device)
 
             if input.dim() == 0:
                 input = input.unsqueeze(0)
 
         return outputs.squeeze(1)
 
-    def generate(self, z, n_steps, temperature, use_cuda, max_sample=MAX_SAMPLE, trunc_sample=TRUNCATED_SAMPLE):
-        global USE_CUDA
-        USE_CUDA = use_cuda
+    def generate(self, z, condition, n_steps, temperature, device, max_sample=MAX_SAMPLE, trunc_sample=TRUNCATED_SAMPLE):
+        outputs = Variable(torch.zeros(n_steps, 1, self.output_size)).to(device)
+        input = Variable(torch.LongTensor([SOS_token])).to(device)
 
-        outputs = Variable(torch.zeros(n_steps, 1, self.output_size))
-        if USE_CUDA:
-            outputs = outputs.cuda()
-
-        input = Variable(torch.LongTensor([SOS_token]))
-        if USE_CUDA:
-            input = input.cuda()
-        hidden = self.z2h(z).unsqueeze(0).repeat(self.n_layers, 1, 1)
+        decode_embed = torch.cat([z, condition], 1)
+        hidden = self.i2h(decode_embed).unsqueeze(0).repeat(self.n_layers, 1, 1)
 
         for i in range(n_steps):
-            output, hidden = self.step(i, z, input, hidden)
+            output, hidden = self.step(i, decode_embed, input, hidden)
             outputs[i] = output
-            input, top_i = self.sample(output, temperature, max_sample=MAX_SAMPLE, trunc_sample=TRUNCATED_SAMPLE)
+            input, top_i = self.sample(output, temperature, device, max_sample=MAX_SAMPLE, trunc_sample=TRUNCATED_SAMPLE)
             #if top_i == EOS: break
         return outputs.squeeze(1)
 
-    def step(self, s, z, input, hidden):
-        # print('[DecoderRNN.step] s =', s, 'z =', z.size(), 'i =', input.size(), 'h =', hidden.size())
+    def step(self, s, decode_embed, input, hidden):
+        # print('[DecoderRNN.step] s =', s, 'decode_embed =', decode_embed.size(), 'i =', input.size(), 'h =', hidden.size())
         input = F.relu(self.embed(input))
-        input = torch.cat((input, z), 1)
+        input = torch.cat((input, decode_embed), 1)
         input = input.unsqueeze(0)
         output, hidden = self.gru(input, hidden)
         output = output.squeeze(0)
-        output = torch.cat((output, z), 1)
+        output = torch.cat((output, decode_embed), 1)
         output = self.out(output)
         return output, hidden
 
@@ -249,31 +230,33 @@ class DecoderRNN(nn.Module):
 # ------------------------------------------------------------------------------
 
 class VAE(nn.Module):
-    def __init__(self, encoder, decoder):
+    def __init__(self, encoder, decoder, n_steps):
         super(VAE, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
-        self.steps_seen = 0
+
+        self.register_buffer('steps_seen', torch.tensor(0, dtype=torch.long))
+        self.register_buffer('kld_max', torch.tensor(1.0, dtype=torch.float))
+        self.register_buffer('kld_weight', torch.tensor(0.0, dtype=torch.float))
+        self.register_buffer('kld_inc', torch.tensor((self.kld_max - self.kld_weight) / (n_steps // 2), dtype=torch.float))
 
     def encode(self, inputs):
         m, l, z = self.encoder(inputs)
         return m, l, z
 
-    def forward(self, inputs, targets, temperature=1.0):
-        m, l, z = self.encoder(inputs)
-        decoded = self.decoder(z, targets, temperature)
+    def forward(self, inputs, targets, condition, device, temperature=1.0):
+        m, l, z = self.encoder(inputs, device)
+        decoded = self.decoder(z, condition, targets, temperature, device)
         return m, l, z, decoded
 
 # Test
 
 if __name__ == '__main__':
+    device = torch.device(f'cuda:{torch.cuda.current_device()}' if torch.cuda.is_available() else 'cpu')
     hidden_size = 20
     embed_size = 10
-    e = EncoderRNN(n_characters, hidden_size, embed_size)
-    d = DecoderRNN(embed_size, hidden_size, n_characters, 2)
-    if USE_CUDA:
-        e.cuda()
-        d.cuda()
+    e = EncoderRNN(n_characters, hidden_size, embed_size).to(device)
+    d = DecoderRNN(embed_size, hidden_size, n_characters, 2).to(device)
     vae = VAE(e, d)
     m, l, z, decoded = vae(char_tensor('@spro'))
     print('m =', m.size())

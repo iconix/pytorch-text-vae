@@ -1,7 +1,7 @@
-# Author: Kyle Kastner
+# Author: Nadja Rhodes
 # License: BSD 3-Clause
-# Modified from Sean Robertson's example here:
-# https://github.com/spro/pytorch-text-vae
+# Modified from Kyle Kastner's example here:
+# https://github.com/kastnerkyle/pytorch-text-vae
 import time
 import os
 try:
@@ -13,6 +13,7 @@ import dill as pickle
 
 import numpy as np
 import re
+import sys
 import unidecode
 import unicodedata
 import collections
@@ -22,11 +23,83 @@ EOS_token = 1
 UNK_token = 2
 N_CORE = 24
 
+class InputData:
+    from enum import Enum
+    class DataType(Enum):
+        DEFAULT = 1
+        JSON = 2
+        QUILT = 3
 
-def read_file_line_gen(filename):
-    with open(filename) as f:
-        for line in f:
-            yield unidecode.unidecode(line)
+    def __init__(self, filename):
+        self.filename = filename
+
+        if filename.endswith('.quilt'):
+            self.data_type = self.DataType.QUILT
+        elif filename.endswith('.json'):
+            self.data_type = self.DataType.JSON
+        else:
+            self.data_type = self.DataType.DEFAULT
+
+    def __iter__(self):
+        if self.data_type == self.DataType.QUILT:
+            return self.read_quilt_gen()
+        elif self.data_type == self.DataType.JSON:
+            return self.read_json_gen()
+        else:
+            return self.read_file_line_gen()
+
+    def read_file_line_gen(self):
+        with open(self.filename) as f:
+            for line in f:
+                yield unidecode.unidecode(line)
+
+    def encode_genre(self, genres):
+        e = np.zeros(len(self.genre_set))
+        for g in genres:
+            e[self.genre_dict[g]] = 1
+        return e
+
+    def read_json_gen(self):
+        import pandas as pd
+        df = pd.read_json(self.filename)
+
+        self.genre_set = set([g for gg in df.spotify_genres for g in gg])
+        self.genre_dict = {unique_g: i for i, unique_g in enumerate(sorted(self.genre_set))}
+
+        for i, row in df.iterrows():
+            gs = self.encode_genre(row.spotify_genres)
+            for sent in row.content_sentences:
+                yield sent, gs
+
+    def read_quilt_gen(self):
+        # TODO: segmentation fault (core dumped) issue
+
+        # read config of format:
+            # PACKAGE
+            # MODULE_NAME
+            # NODE_NAME
+
+        configs = []
+        with open(self.filename) as f:
+            for line in f:
+                configs.append(line.strip())
+
+        if len(configs) != 3:
+            print('ERROR: invalid .quilt config file. Expecting 3 lines with PACKAGE, MODULE_NAME, and NODE_NAME.')
+            sys.exit()
+
+        import quilt
+        pkg_name = f'{configs[0].split(".")[-1]}/{configs[1]}'
+        quilt.install(pkg_name, force=True) # overwrites local install
+
+        from importlib import import_module
+        import_module(f'{configs[0]}.{configs[1]}') # e.g., import_module('quilt.data.iconix.deephypebot')
+
+        # e.g., df = quilt.data.iconix.deephypebot.reviews_and_metadata_5yrs()
+        df = getattr(sys.modules[f'{configs[0]}.{configs[1]}'], configs[2])()
+
+        print(df.head())
+        sys.exit()
 
 
 norvig_list = None
@@ -134,14 +207,27 @@ REVERSE_WORDS = None
 def unk_func():
     return "UNK"
 
-def _setup(filepath, vocabulary_size):
+def _get_line(data_type):
+    # JSON data can come with extra conditional info
+    if data_type == InputData.DataType.JSON:
+        line = elem[0]
+    else:
+        line = elem
+
+    return line
+
+def _setup(path, vocabulary_size):
     global WORDS
     global REVERSE_WORDS
     wc = collections.Counter()
-    for n, line in enumerate(read_file_line_gen(filepath)):
+    data = InputData(path)
+    for n, elem in enumerate(iter(data)):
         if n % 100000 == 0:
             print("Fetching vocabulary from line {}".format(n))
             print("Current word count {}".format(len(wc.keys())))
+
+        line = _get_line(data.data_type)
+
         l = line.strip().lstrip().rstrip()
         if MIN_LENGTH < len(l.split(' ')) < MAX_LENGTH:
             l = normalize_string(l)
@@ -149,6 +235,7 @@ def _setup(filepath, vocabulary_size):
             wc.update(WORDS)
         else:
             continue
+
     the_words = ["SOS", "EOS", "UNK"]
     the_reverse_words = [w[::-1] for w in ["SOS", "EOS", "UNK"]]
     the_words += [wi[0] for wi in wc.most_common()[:vocabulary_size - 3]]
@@ -189,8 +276,10 @@ def process(q, oq, iolock):
         stuff = q.get()
         if stuff is None:
             break
-        r = [proc_line(s, True) for s in stuff]
-        r = [ri for ri in r if ri != None]
+        r = [(proc_line(s[0], True), s[1]) if isinstance(s, tuple) else proc_line(s, True) for s in stuff]
+        r = [ri for ri in r if ri != None and ri[0] != None]
+        # flatten any tuples
+        r = [ri[0] + (ri[1], ) if isinstance(ri, tuple) else ri for ri in r]
         if len(r) > 0:
             oq.put(r)
 
@@ -251,8 +340,9 @@ def prepare_pair_data(path, vocabulary_size, tmp_path, min_length, max_length, r
     avg_time_per_block = 30
     status_every = 100000
     print("Starting block processing")
-    for n, line in enumerate(read_file_line_gen(path)):
-        curr_block.append(line)
+    data = InputData(path)
+    for n, elem in enumerate(iter(data)):
+        curr_block.append(elem)
         if len(curr_block) > block_size:
             # this could block, oy
             q.put(curr_block)
