@@ -1,11 +1,12 @@
-Changes in this fork: 
+Changes in this fork:
 - Update compatibility to Python 3 and PyTorch 0.4
 - Add `generate.py` for sampling
+- Add special support for JSON reading and thought vector conditioning
 - Some code cleanup
 
 ---
 
-An partial reimplementation of "Generating Sentences From a Continuous Space", Bowman, Vilnis, Vinyals, Dai, Jozefowicz, Bengio (``https://arxiv.org/abs/1511.06349``). 
+An partial reimplementation of "Generating Sentences From a Continuous Space", Bowman, Vilnis, Vinyals, Dai, Jozefowicz, Bengio (``https://arxiv.org/abs/1511.06349``).
 
 Based on code from Sean Robertson (``@spro``) ``https://github.com/spro/pytorch-text-vae``, adapted to word level as in the original paper.
 
@@ -32,15 +33,15 @@ Example output:
     ('(s0)', u'it had taken years to believe')
 
     ('(z0)', ' it had taken time to his')
-    
+
     ('  .)', ' it had my hands to his')
-    
+
     ('  .)', ' but it was mad at his end')
-    
+
     ('  .)', ' but it was nt mad at his end')
-    
+
     ('(z1)', ' but it was all her at the end')
-    
+
     ('(s1)', u'but it was all lies at the end')
 
 
