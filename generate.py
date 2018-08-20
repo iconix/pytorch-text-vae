@@ -13,10 +13,6 @@ from pdb import set_trace
 
 if __name__ == "__main__":
 
-    '''if len(sys.argv) < 3 or not sys.argv[1].endswith("_stored_info.pkl") or not sys.argv[2].endswith(".pt"):
-        print("Usage: python generate.py [modelname]_stored_info.pkl [modelname].pt <optional args>")
-        sys.exit(1)'''
-
     parser = argparse.ArgumentParser(description='pytorch-text-vae:generate')
     parser.add_argument('saved_vae', metavar='SAVED_VAE', help='saved PyTorch vae model')
     parser.add_argument('stored_info', metavar='STORED_INFO', help='pkl of stored info')
@@ -52,24 +48,21 @@ if __name__ == "__main__":
     cache_file =  os.path.join(args.cache_path, stored_info)
 
     start_load = time.time()
-    print("Fetching cached info at {}".format(cache_file))
+    print(f"Fetching cached info at {cache_file}")
     with open(cache_file, "rb") as f:
-        input_side, output_side, pairs, EMBED_SIZE, DECODER_HIDDEN_SIZE, ENCODER_HIDDEN_SIZE, N_ENCODER_LAYERS = pickle.load(f)
+        input_side, output_side, pairs, dataset, EMBED_SIZE, CONDITION_SIZE, DECODER_HIDDEN_SIZE, ENCODER_HIDDEN_SIZE, N_ENCODER_LAYERS = pickle.load(f)
     end_load = time.time()
-    print("Cache {} loaded, total load time {}".format(cache_file, end_load - start_load))
+    print(f"Cache {cache_file} loaded (load time: {end_load - start_load:.2f}s)")
 
     if os.path.exists(args.saved_vae):
-        print("Found saved model {}".format(args.saved_vae))
+        print(f"Found saved model {args.saved_vae}")
+        start_load_model = time.time()
 
-        if args.saved_vae.endswith("_state.pt"):
-            e = model.EncoderRNN(input_side.n_words, ENCODER_HIDDEN_SIZE, EMBED_SIZE, N_ENCODER_LAYERS, bidirectional=True)
-            d = model.DecoderRNN(EMBED_SIZE, DECODER_HIDDEN_SIZE, input_side.n_words, 1, word_dropout=0)
-            vae = model.VAE(e, d)
-            vae.to(DEVICE)
-            vae.load_state_dict(torch.load(args.saved_vae))
-        else:
-            vae = torch.load(args.saved_vae)
-            print("Trained for {} steps".format(vae.steps_seen))
+        e = model.EncoderRNN(input_side.n_words, ENCODER_HIDDEN_SIZE, EMBED_SIZE, N_ENCODER_LAYERS, bidirectional=True)
+        d = model.DecoderRNN(EMBED_SIZE, CONDITION_SIZE, DECODER_HIDDEN_SIZE, input_side.n_words, 1, word_dropout=0)
+        vae = model.VAE(e, d).to(DEVICE)
+        vae.load_state_dict(torch.load(args.saved_vae))
+        print(f"Trained for {vae.steps_seen} steps (load time: {time.time() - start_load_model:.2f}s)")
 
         print("Setting new random seed")
         if args.seed is None:
@@ -80,11 +73,17 @@ if __name__ == "__main__":
             new_seed = args.seed
         torch.manual_seed(new_seed)
 
+        random_state = np.random.RandomState(new_seed)
+        random_state.shuffle(pairs)
+
         gens = []
         zs = []
+        conditions = []
         for i in range(args.num_sample):
             z = torch.randn(EMBED_SIZE).unsqueeze(0).to(DEVICE)
-            generated = vae.decoder.generate(z, args.max_length, args.temp, DEVICE)
+            condition = model.random_training_set(pairs, input_side, output_side, random_state, DEVICE)[2]
+
+            generated = vae.decoder.generate(z, condition, args.max_length, args.temp, DEVICE)
             generated_str = model.float_word_tensor_to_string(output_side, generated)
 
             EOS_str = f' {output_side.index_to_word(torch.LongTensor([EOS_token]))} '
@@ -96,8 +95,10 @@ if __name__ == "__main__":
             generated_str = generated_str[::-1]
 
             print('---')
+            print(dataset.decode_genres(condition))
             print(generated_str)
             gens.append(generated_str)
             zs.append(z)
+            conditions.append(condition)
             if args.print_z:
                 print(z)

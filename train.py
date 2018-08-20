@@ -42,32 +42,21 @@ def train_vae(data_path, tmp_path=f'tmp{os.sep}',
         if not os.path.exists(cache_path):
             os.mkdir(cache_path)
 
-        input_side, output_side, pairs = prepare_pair_data(data_path, max_vocab, tmp_path, min_gen_len, max_gen_len, reverse=True)
+        input_side, output_side, pairs, dataset = prepare_pair_data(data_path, max_vocab, tmp_path, min_gen_len, max_gen_len, reverse=True)
 
         with open(cache_file, "wb") as f:
-            pickle.dump((input_side, output_side, pairs, embed_size, decoder_hidden_size, encoder_hidden_size, n_encoder_layers), f)
+            pickle.dump((input_side, output_side, pairs, dataset, embed_size, condition_size, decoder_hidden_size, encoder_hidden_size, n_encoder_layers), f)
     else:
         start_load = time.time()
         print("Fetching cached info at {}".format(cache_file))
         with open(cache_file, "rb") as f:
-            input_side, output_side, pairs, embed_size, decoder_hidden_size, encoder_hidden_size, n_encoder_layers = pickle.load(f)
+            input_side, output_side, pairs, dataset, embed_size, condition_size, decoder_hidden_size, encoder_hidden_size, n_encoder_layers = pickle.load(f)
         end_load = time.time()
         print(f"Cache {cache_file} loaded (load time: {end_load - start_load:.2f}s)")
 
     print("Shuffling training data")
     random_state = np.random.RandomState(1999)
     random_state.shuffle(pairs)
-
-
-    def random_training_set(device):
-        pair_i = random_state.choice(len(pairs))
-        pair = pairs[pair_i]
-
-        inp = word_tensor(input_side, pair[0]).to(device)
-        target = word_tensor(output_side, pair[1]).to(device)
-        condition = torch.tensor(pair[2], dtype=torch.float).unsqueeze(0).to(device) if len(pair) == 3 else None
-
-        return inp, target, condition
 
     print("Initializing model")
     n_words = input_side.n_words
@@ -125,7 +114,7 @@ def train_vae(data_path, tmp_path=f'tmp{os.sep}',
         last_log_step = -log_every_n_steps - 1
         start_steps = vae.steps_seen
         for step in range(start_steps, n_steps):
-            input, target, condition = random_training_set(DEVICE)
+            input, target, condition = random_training_set(pairs, input_side, output_side, random_state, DEVICE)
             optimizer.zero_grad()
 
             m, l, z, decoded = vae(input, target, condition, DEVICE, temperature)
@@ -165,11 +154,7 @@ def train_vae(data_path, tmp_path=f'tmp{os.sep}',
 
                 if generate_samples:
                     rand_z = torch.randn(embed_size).unsqueeze(0).to(DEVICE)
-
-                    genre_vapor_soul_idx = 126
-                    fixed_condition = torch.zeros(condition_size).to(DEVICE)
-                    fixed_condition[genre_vapor_soul_idx] = 1
-                    fixed_condition = fixed_condition.unsqueeze(0)
+                    fixed_condition = torch.FloatTensor(dataset.encode_genres(['vapor soul'])).to(DEVICE)
 
                     generated = vae.decoder.generate(rand_z, fixed_condition, max_gen_len, temperature, DEVICE)
                     generated_str = float_word_tensor_to_string(output_side, generated)

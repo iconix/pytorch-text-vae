@@ -23,7 +23,7 @@ EOS_token = 1
 UNK_token = 2
 N_CORE = 24
 
-class InputData:
+class Dataset:
     from enum import Enum
     class DataType(Enum):
         DEFAULT = 1
@@ -53,21 +53,29 @@ class InputData:
             for line in f:
                 yield unidecode.unidecode(line)
 
-    def encode_genre(self, genres):
+    def encode_genres(self, genres):
         e = np.zeros(len(self.genre_set))
         for g in genres:
-            e[self.genre_dict[g]] = 1
+            e[self.genre_to_idx[g]] = 1
         return e
+
+    def decode_genres(self, tensor):
+        genres = []
+        for i, x in enumerate(tensor.squeeze()):
+            if x.item() == 1:
+                genres.append(self.idx_to_genre[i])
+        return genres
 
     def read_json_gen(self):
         import pandas as pd
         df = pd.read_json(self.filename)
 
         self.genre_set = set([g for gg in df.spotify_genres for g in gg])
-        self.genre_dict = {unique_g: i for i, unique_g in enumerate(sorted(self.genre_set))}
+        self.genre_to_idx = {unique_g: i for i, unique_g in enumerate(sorted(self.genre_set))}
+        self.idx_to_genre = {i: unique_g for i, unique_g in enumerate(sorted(self.genre_set))}
 
         for i, row in df.iterrows():
-            gs = self.encode_genre(row.spotify_genres)
+            gs = self.encode_genres(row.spotify_genres)
             for sent in row.content_sentences:
                 yield sent, gs
 
@@ -209,7 +217,7 @@ def unk_func():
 
 def _get_line(data_type):
     # JSON data can come with extra conditional info
-    if data_type == InputData.DataType.JSON:
+    if data_type == Dataset.DataType.JSON:
         line = elem[0]
     else:
         line = elem
@@ -220,13 +228,13 @@ def _setup(path, vocabulary_size):
     global WORDS
     global REVERSE_WORDS
     wc = collections.Counter()
-    data = InputData(path)
-    for n, elem in enumerate(iter(data)):
+    dataset = Dataset(path)
+    for n, elem in enumerate(iter(dataset)):
         if n % 100000 == 0:
             print("Fetching vocabulary from line {}".format(n))
             print("Current word count {}".format(len(wc.keys())))
 
-        line = _get_line(data.data_type)
+        line = _get_line(dataset.data_type)
 
         l = line.strip().lstrip().rstrip()
         if MIN_LENGTH < len(l.split(' ')) < MAX_LENGTH:
@@ -340,8 +348,8 @@ def prepare_pair_data(path, vocabulary_size, tmp_path, min_length, max_length, r
     avg_time_per_block = 30
     status_every = 100000
     print("Starting block processing")
-    data = InputData(path)
-    for n, elem in enumerate(iter(data)):
+    dataset = Dataset(path)
+    for n, elem in enumerate(iter(dataset)):
         curr_block.append(elem)
         if len(curr_block) > block_size:
             # this could block, oy
@@ -399,4 +407,4 @@ def prepare_pair_data(path, vocabulary_size, tmp_path, min_length, max_length, r
     pool.close()
     pool.join()
     print("Pair preparation complete")
-    return input_side, output_side, pairs
+    return input_side, output_side, pairs, dataset

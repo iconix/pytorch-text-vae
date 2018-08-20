@@ -58,15 +58,17 @@ def word_tensor(lang, string):
     tensor = Variable(tensor)
     return tensor
 
+def random_training_set(pairs, input_side, output_side, random_state, device):
+    pair_i = random_state.choice(len(pairs))
+    pair = pairs[pair_i]
+
+    inp = word_tensor(input_side, pair[0]).to(device)
+    target = word_tensor(output_side, pair[1]).to(device)
+    condition = torch.tensor(pair[2], dtype=torch.float).unsqueeze(0).to(device) if len(pair) == 3 else None
+
+    return inp, target, condition
 
 def index_to_word(lang, top_i):
-    #if top_i == EOS_token:
-    #    return 'EOS' + " "
-    #elif top_i == SOS_token:
-    #    return 'SOS' + " "
-    #elif top_i == UNK_token:
-    #    return 'UNK' + " "
-    #else:
     return lang.index_to_word(top_i) + " "
 
 
@@ -205,6 +207,9 @@ class DecoderRNN(nn.Module):
         outputs = Variable(torch.zeros(n_steps, 1, self.output_size)).to(device)
         input = Variable(torch.LongTensor([SOS_token])).to(device)
 
+        if condition.dim() == 1:
+            condition = condition.unsqueeze(0)
+
         decode_embed = torch.cat([z, condition], 1)
         hidden = self.i2h(decode_embed).unsqueeze(0).repeat(self.n_layers, 1, 1)
 
@@ -230,7 +235,7 @@ class DecoderRNN(nn.Module):
 # ------------------------------------------------------------------------------
 
 class VAE(nn.Module):
-    def __init__(self, encoder, decoder, n_steps):
+    def __init__(self, encoder, decoder, n_steps=None):
         super(VAE, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
@@ -238,7 +243,10 @@ class VAE(nn.Module):
         self.register_buffer('steps_seen', torch.tensor(0, dtype=torch.long))
         self.register_buffer('kld_max', torch.tensor(1.0, dtype=torch.float))
         self.register_buffer('kld_weight', torch.tensor(0.0, dtype=torch.float))
-        self.register_buffer('kld_inc', torch.tensor((self.kld_max - self.kld_weight) / (n_steps // 2), dtype=torch.float))
+        if n_steps is not None:
+            self.register_buffer('kld_inc', torch.tensor((self.kld_max - self.kld_weight) / (n_steps // 2), dtype=torch.float))
+        else:
+            self.register_buffer('kld_inc', torch.tensor(0, dtype=torch.float))
 
     def encode(self, inputs):
         m, l, z = self.encoder(inputs)
