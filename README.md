@@ -3,6 +3,7 @@ Changes in this fork:
 - Add `generate.py` for sampling
 - Add special support for JSON reading and thought vector conditioning
 - Some code cleanup
+- Add `setup.py` for package support as `pytorchtextvae`
 
 ---
 
