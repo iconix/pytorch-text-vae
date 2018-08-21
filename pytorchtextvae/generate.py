@@ -26,7 +26,7 @@ def load_model(saved_vae, stored_info, cache_path, seed, device):
         e = model.EncoderRNN(input_side.n_words, ENCODER_HIDDEN_SIZE, EMBED_SIZE, N_ENCODER_LAYERS, bidirectional=True)
         d = model.DecoderRNN(EMBED_SIZE, CONDITION_SIZE, DECODER_HIDDEN_SIZE, input_side.n_words, 1, word_dropout=0)
         vae = model.VAE(e, d).to(device)
-        vae.load_state_dict(torch.load(saved_vae))
+        vae.load_state_dict(torch.load(saved_vae, map_location=lambda storage, loc: storage))
         print(f"Trained for {vae.steps_seen} steps (load time: {time.time() - start_load_model:.2f}s)")
 
         print("Setting new random seed")
@@ -74,37 +74,9 @@ def generate(vae, num_sample, max_length, temp, print_z, input_side, output_side
 
     return gens, zs, conditions
 
-def run(saved_vae, stored_info, cache_path=str(Path('tmp')), max_length=50, num_sample=10, seed=None, temp=0.75,
+def run(saved_vae, stored_info, cache_path=str(Path('../tmp')), max_length=50, num_sample=10, seed=None, temp=0.75,
             use_cuda=True, print_z=False):
 
-    '''parser = argparse.ArgumentParser(description='pytorch-text-vae:generate')
-    parser.add_argument('saved_vae', metavar='SAVED_VAE', help='saved PyTorch vae model')
-    parser.add_argument('stored_info', metavar='STORED_INFO', help='pkl of stored info')
-    parser.add_argument('--cache-path', default=str(Path('tmp')), metavar='CACHE',
-                        help='cache path (default: tmp)')
-    parser.add_argument('--max-length', type=int, default=50, metavar='LEN',
-                        help='max num words per sample (default: 50)')
-    parser.add_argument('--num-sample', type=int, default=10, metavar='NS',
-                        help='num samplings (default: 10)')
-    parser.add_argument('--seed', type=int, default=None, metavar='S',
-                        help='seed for random number generator (default: None)')
-    parser.add_argument('--temp', type=float, default=0.75, metavar='T',
-                        help='sample temperature (default: 0.75)')
-
-    cuda_parser = parser.add_mutually_exclusive_group(required=False)
-    cuda_parser.add_argument('--cuda', dest='use_cuda', action='store_true')
-    cuda_parser.add_argument('--no-cuda', dest='use_cuda', action='store_false')
-
-    prn_z_parser = parser.add_mutually_exclusive_group(required=False)
-    prn_z_parser.add_argument('--print-z', dest='print_z', action='store_true')
-    prn_z_parser.add_argument('--no-print-z', dest='print_z', action='store_false')
-
-    parser.set_defaults(use_cuda=True, print_z=False)
-
-    args = parser.parse_args()
-
-    args_passed = locals()['args']
-    print(args_passed)'''
     args_passed = locals()
     print(args_passed)
 
