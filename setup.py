@@ -11,7 +11,7 @@ setup(
     long_description_content_type = "text/markdown",
     license = "MIT",
     url = "https://github.com/iconix/pytorch-text-vae",
-    packages = [ 'pytorch-text-vae' ],
+    packages = [ 'pytorchtextvae' ],
     install_requires = [ 'dill', 'fire', 'unidecode' ],
     keywords = [ 'deeplearning', 'pytorch', 'vae', 'nlp' ],
     classifiers = ['Development Status :: 3 - Alpha',
