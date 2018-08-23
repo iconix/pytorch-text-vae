@@ -2,16 +2,15 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 import torch.nn.functional as F
-from datasets import *
+from torch.nn import Parameter
+from functools import wraps
+
+from pytorchtextvae.datasets import *
 
 MAX_SAMPLE = False
 TRUNCATED_SAMPLE = True
 model_random_state = np.random.RandomState(1988)
 torch.manual_seed(1999)
-
-import torch
-from torch.nn import Parameter
-from functools import wraps
 
 
 def _decorate(forward, module, name, name_g, name_v):
@@ -271,4 +270,3 @@ if __name__ == '__main__':
     print('l =', l.size())
     print('z =', z.size())
     print('decoded', tensor_to_string(decoded))
-

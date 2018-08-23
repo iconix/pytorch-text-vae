@@ -5,8 +5,8 @@ from pathlib import Path
 import time
 import torch
 
-import model
-from datasets import EOS_token
+from pytorchtextvae.model import *
+from pytorchtextvae.datasets import EOS_token
 
 def load_model(saved_vae, stored_info, cache_path, seed, device):
     stored_info = stored_info.split(os.sep)[-1]
@@ -23,9 +23,9 @@ def load_model(saved_vae, stored_info, cache_path, seed, device):
         print(f"Found saved model {saved_vae}")
         start_load_model = time.time()
 
-        e = model.EncoderRNN(input_side.n_words, ENCODER_HIDDEN_SIZE, EMBED_SIZE, N_ENCODER_LAYERS, bidirectional=True)
-        d = model.DecoderRNN(EMBED_SIZE, CONDITION_SIZE, DECODER_HIDDEN_SIZE, input_side.n_words, 1, word_dropout=0)
-        vae = model.VAE(e, d).to(device)
+        e = EncoderRNN(input_side.n_words, ENCODER_HIDDEN_SIZE, EMBED_SIZE, N_ENCODER_LAYERS, bidirectional=True)
+        d = DecoderRNN(EMBED_SIZE, CONDITION_SIZE, DECODER_HIDDEN_SIZE, input_side.n_words, 1, word_dropout=0)
+        vae = VAE(e, d).to(device)
         vae.load_state_dict(torch.load(saved_vae, map_location=lambda storage, loc: storage))
         print(f"Trained for {vae.steps_seen} steps (load time: {time.time() - start_load_model:.2f}s)")
 
@@ -50,10 +50,10 @@ def generate(vae, num_sample, max_length, temp, print_z, input_side, output_side
 
     for i in range(num_sample):
         z = torch.randn(embed_size).unsqueeze(0).to(device)
-        condition = model.random_training_set(pairs, input_side, output_side, random_state, device)[2]
+        condition = random_training_set(pairs, input_side, output_side, random_state, device)[2]
 
         generated = vae.decoder.generate(z, condition, max_length, temp, device)
-        generated_str = model.float_word_tensor_to_string(output_side, generated)
+        generated_str = float_word_tensor_to_string(output_side, generated)
 
         EOS_str = f' {output_side.index_to_word(torch.LongTensor([EOS_token]))} '
 
