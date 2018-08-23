@@ -5,10 +5,10 @@ from pathlib import Path
 import time
 import torch
 
-from pytorchtextvae.model import *
+import pytorchtextvae.model as model
 from pytorchtextvae.datasets import EOS_token
 
-def load_model(saved_vae, stored_info, cache_path, seed, device):
+def load_model(saved_vae, stored_info, device, cache_path=str(Path('../tmp')), seed=None):
     stored_info = stored_info.split(os.sep)[-1]
     cache_file =  os.path.join(cache_path, stored_info)
 
@@ -23,9 +23,9 @@ def load_model(saved_vae, stored_info, cache_path, seed, device):
         print(f"Found saved model {saved_vae}")
         start_load_model = time.time()
 
-        e = EncoderRNN(input_side.n_words, ENCODER_HIDDEN_SIZE, EMBED_SIZE, N_ENCODER_LAYERS, bidirectional=True)
-        d = DecoderRNN(EMBED_SIZE, CONDITION_SIZE, DECODER_HIDDEN_SIZE, input_side.n_words, 1, word_dropout=0)
-        vae = VAE(e, d).to(device)
+        e = model.EncoderRNN(input_side.n_words, ENCODER_HIDDEN_SIZE, EMBED_SIZE, N_ENCODER_LAYERS, bidirectional=True)
+        d = model.DecoderRNN(EMBED_SIZE, CONDITION_SIZE, DECODER_HIDDEN_SIZE, input_side.n_words, 1, word_dropout=0)
+        vae = model.VAE(e, d).to(device)
         vae.load_state_dict(torch.load(saved_vae, map_location=lambda storage, loc: storage))
         print(f"Trained for {vae.steps_seen} steps (load time: {time.time() - start_load_model:.2f}s)")
 
@@ -43,17 +43,17 @@ def load_model(saved_vae, stored_info, cache_path, seed, device):
 
     return vae, input_side, output_side, pairs, dataset, EMBED_SIZE, random_state
 
-def generate(vae, num_sample, max_length, temp, print_z, input_side, output_side, pairs, dataset, embed_size, random_state, device):
+def generate(vae, input_side, output_side, pairs, dataset, embed_size, random_state, device, max_length=50, num_sample=10, temp=0.75, print_z=False):
     gens = []
     zs = []
     conditions = []
 
     for i in range(num_sample):
         z = torch.randn(embed_size).unsqueeze(0).to(device)
-        condition = random_training_set(pairs, input_side, output_side, random_state, device)[2]
+        condition = model.random_training_set(pairs, input_side, output_side, random_state, device)[2]
 
         generated = vae.decoder.generate(z, condition, max_length, temp, device)
-        generated_str = float_word_tensor_to_string(output_side, generated)
+        generated_str = model.float_word_tensor_to_string(output_side, generated)
 
         EOS_str = f' {output_side.index_to_word(torch.LongTensor([EOS_token]))} '
 
@@ -82,8 +82,8 @@ def run(saved_vae, stored_info, cache_path=str(Path('../tmp')), max_length=50, n
 
     DEVICE = torch.device(f'cuda:{torch.cuda.current_device()}' if torch.cuda.is_available() and use_cuda else 'cpu')
 
-    vae, input_side, output_side, pairs, dataset, embed_size, random_state = load_model(saved_vae, stored_info, cache_path, seed, DEVICE)
-    gens, zs, conditions = generate(vae, num_sample, max_length, temp, print_z, input_side, output_side, pairs, dataset, embed_size, random_state, DEVICE)
+    vae, input_side, output_side, pairs, dataset, embed_size, random_state = load_model(saved_vae, stored_info, DEVICE, cache_path, seed)
+    gens, zs, conditions = generate(vae, input_side, output_side, pairs, dataset, embed_size, random_state, DEVICE, max_length, num_sample, temp, print_z)
 
 if __name__ == "__main__":
     import fire; fire.Fire(run)
