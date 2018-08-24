@@ -43,14 +43,21 @@ def load_model(saved_vae, stored_info, device, cache_path=str(Path('../tmp')), s
 
     return vae, input_side, output_side, pairs, dataset, EMBED_SIZE, random_state
 
-def generate(vae, input_side, output_side, pairs, dataset, embed_size, random_state, device, max_length=50, num_sample=10, temp=0.75, print_z=False):
+def generate(vae, input_side, output_side, pairs, dataset, embed_size, random_state, device, genres=None, max_length=50, num_sample=10, temp=0.75, print_z=False):
     gens = []
     zs = []
     conditions = []
 
+    if genres is not None and not isinstance(genres, list):
+        print(f'[WARNING] genres provided is of type "{type(genres).__name__}" but should be of type "list". Continuing with random genres...')
+
     for i in range(num_sample):
         z = torch.randn(embed_size).unsqueeze(0).to(device)
-        condition = model.random_training_set(pairs, input_side, output_side, random_state, device)[2]
+
+        if isinstance(genres, list):
+            condition = torch.tensor(dataset.encode_genres(genres), dtype=torch.float).unsqueeze(0).to(device)
+        else:
+            condition = model.random_training_set(pairs, input_side, output_side, random_state, device)[2]
 
         generated = vae.decoder.generate(z, condition, max_length, temp, device)
         generated_str = model.float_word_tensor_to_string(output_side, generated)
@@ -74,7 +81,7 @@ def generate(vae, input_side, output_side, pairs, dataset, embed_size, random_st
 
     return gens, zs, conditions
 
-def run(saved_vae, stored_info, cache_path=str(Path('../tmp')), max_length=50, num_sample=10, seed=None, temp=0.75,
+def run(saved_vae, stored_info, cache_path=str(Path('../tmp')), genres=None, max_length=50, num_sample=10, seed=None, temp=0.75,
             use_cuda=True, print_z=False):
 
     args_passed = locals()
@@ -83,7 +90,7 @@ def run(saved_vae, stored_info, cache_path=str(Path('../tmp')), max_length=50, n
     DEVICE = torch.device(f'cuda:{torch.cuda.current_device()}' if torch.cuda.is_available() and use_cuda else 'cpu')
 
     vae, input_side, output_side, pairs, dataset, embed_size, random_state = load_model(saved_vae, stored_info, DEVICE, cache_path, seed)
-    gens, zs, conditions = generate(vae, input_side, output_side, pairs, dataset, embed_size, random_state, DEVICE, max_length, num_sample, temp, print_z)
+    gens, zs, conditions = generate(vae, input_side, output_side, pairs, dataset, embed_size, random_state, DEVICE, genres, max_length, num_sample, temp, print_z)
 
 if __name__ == "__main__":
     import fire; fire.Fire(run)
