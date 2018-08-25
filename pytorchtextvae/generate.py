@@ -15,7 +15,7 @@ def load_model(saved_vae, stored_info, device, cache_path=str(Path('../tmp')), s
     start_load = time.time()
     print(f"Fetching cached info at {cache_file}")
     with open(cache_file, "rb") as f:
-        input_side, output_side, pairs, dataset, EMBED_SIZE, CONDITION_SIZE, DECODER_HIDDEN_SIZE, ENCODER_HIDDEN_SIZE, N_ENCODER_LAYERS = pickle.load(f)
+        input_side, output_side, pairs, dataset, Z_SIZE, CONDITION_SIZE, DECODER_HIDDEN_SIZE, ENCODER_HIDDEN_SIZE, N_ENCODER_LAYERS = pickle.load(f)
     end_load = time.time()
     print(f"Cache {cache_file} loaded (load time: {end_load - start_load:.2f}s)")
 
@@ -23,8 +23,8 @@ def load_model(saved_vae, stored_info, device, cache_path=str(Path('../tmp')), s
         print(f"Found saved model {saved_vae}")
         start_load_model = time.time()
 
-        e = model.EncoderRNN(input_side.n_words, ENCODER_HIDDEN_SIZE, EMBED_SIZE, N_ENCODER_LAYERS, bidirectional=True)
-        d = model.DecoderRNN(EMBED_SIZE, CONDITION_SIZE, DECODER_HIDDEN_SIZE, input_side.n_words, 1, word_dropout=0)
+        e = model.EncoderRNN(input_side.n_words, ENCODER_HIDDEN_SIZE, Z_SIZE, N_ENCODER_LAYERS, bidirectional=True)
+        d = model.DecoderRNN(Z_SIZE, len(dataset.genre_set), CONDITION_SIZE, DECODER_HIDDEN_SIZE, input_side.n_words, 1, word_dropout=0)
         vae = model.VAE(e, d).to(device)
         vae.load_state_dict(torch.load(saved_vae, map_location=lambda storage, loc: storage))
         print(f"Trained for {vae.steps_seen} steps (load time: {time.time() - start_load_model:.2f}s)")
@@ -41,9 +41,9 @@ def load_model(saved_vae, stored_info, device, cache_path=str(Path('../tmp')), s
         random_state = np.random.RandomState(new_seed)
         random_state.shuffle(pairs)
 
-    return vae, input_side, output_side, pairs, dataset, EMBED_SIZE, random_state
+    return vae, input_side, output_side, pairs, dataset, Z_SIZE, random_state
 
-def generate(vae, input_side, output_side, pairs, dataset, embed_size, random_state, device, genres=None, max_length=50, num_sample=10, temp=0.75, print_z=False):
+def generate(vae, input_side, output_side, pairs, dataset, z_size, random_state, device, genres=None, max_length=50, num_sample=10, temp=0.75, print_z=False):
     gens = []
     zs = []
     conditions = []
@@ -52,7 +52,7 @@ def generate(vae, input_side, output_side, pairs, dataset, embed_size, random_st
         print(f'[WARNING] genres provided is of type "{type(genres).__name__}" but should be of type "list". Continuing with random genres...')
 
     for i in range(num_sample):
-        z = torch.randn(embed_size).unsqueeze(0).to(device)
+        z = torch.randn(z_size).unsqueeze(0).to(device)
 
         if isinstance(genres, list):
             condition = torch.tensor(dataset.encode_genres(genres), dtype=torch.float).unsqueeze(0).to(device)
@@ -81,7 +81,7 @@ def generate(vae, input_side, output_side, pairs, dataset, embed_size, random_st
 
     return gens, zs, conditions
 
-def run(saved_vae, stored_info, cache_path=str(Path('../tmp')), genres=None, max_length=50, num_sample=10, seed=None, temp=0.75,
+def run(saved_vae, stored_info, cache_path=str(Path(f'..{os.sep}tmp')), genres=None, max_length=50, num_sample=10, seed=None, temp=0.75,
             use_cuda=True, print_z=False):
 
     args_passed = locals()
@@ -89,8 +89,9 @@ def run(saved_vae, stored_info, cache_path=str(Path('../tmp')), genres=None, max
 
     DEVICE = torch.device(f'cuda:{torch.cuda.current_device()}' if torch.cuda.is_available() and use_cuda else 'cpu')
 
-    vae, input_side, output_side, pairs, dataset, embed_size, random_state = load_model(saved_vae, stored_info, DEVICE, cache_path, seed)
-    gens, zs, conditions = generate(vae, input_side, output_side, pairs, dataset, embed_size, random_state, DEVICE, genres, max_length, num_sample, temp, print_z)
+    with torch.no_grad():
+        vae, input_side, output_side, pairs, dataset, z_size, random_state = load_model(saved_vae, stored_info, DEVICE, cache_path, seed)
+        gens, zs, conditions = generate(vae, input_side, output_side, pairs, dataset, z_size, random_state, DEVICE, genres, max_length, num_sample, temp, print_z)
 
 if __name__ == "__main__":
     import fire; fire.Fire(run)

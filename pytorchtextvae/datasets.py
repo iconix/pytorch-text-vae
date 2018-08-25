@@ -116,11 +116,11 @@ norvig_list = None
 '''Things turned to UNK:
 - numbers
 '''
-def get_vocabulary():
+def get_vocabulary(tmp_path):
     global norvig_list
     global reverse_norvig_list
     if norvig_list == None:
-        with open("count_1w.txt") as f:
+        with open(os.path.join(tmp_path, "count_1w.txt")) as f:
             r = f.readlines()
         norvig_list = [tuple(ri.strip().split("\t")) for ri in r]
     return norvig_list
@@ -146,12 +146,12 @@ def normalize_string(s):
 
 
 class Lang:
-    def __init__(self, name, vocabulary_size=-1, reverse=False):
+    def __init__(self, name, tmp_path, vocabulary_size=-1, reverse=False):
         self.name = name
         if reverse:
-            self.vocabulary = [w[::-1] for w in ["SOS", "EOS", "UNK"]] + [w[0][::-1] for w in get_vocabulary()]
+            self.vocabulary = [w[::-1] for w in ["SOS", "EOS", "UNK"]] + [w[0][::-1] for w in get_vocabulary(tmp_path)]
         else:
-            self.vocabulary = ["SOS", "EOS", "UNK"] + [w[0] for w in get_vocabulary()]
+            self.vocabulary = ["SOS", "EOS", "UNK"] + [w[0] for w in get_vocabulary(tmp_path)]
 
         if vocabulary_size < 0:
             vocabulary_size = len(self.vocabulary)
@@ -215,7 +215,7 @@ REVERSE_WORDS = None
 def unk_func():
     return "UNK"
 
-def _get_line(data_type):
+def _get_line(data_type, elem):
     # JSON data can come with extra conditional info
     if data_type == Dataset.DataType.JSON:
         line = elem[0]
@@ -234,7 +234,7 @@ def _setup(path, vocabulary_size):
             print("Fetching vocabulary from line {}".format(n))
             print("Current word count {}".format(len(wc.keys())))
 
-        line = _get_line(dataset.data_type)
+        line = _get_line(dataset.data_type, elem)
 
         l = line.strip().lstrip().rstrip()
         if MIN_LENGTH < len(l.split(' ')) < MAX_LENGTH:
@@ -301,7 +301,7 @@ def prepare_pair_data(path, vocabulary_size, tmp_path, min_length, max_length, r
     print("Reading lines...")
     print(f'MIN_LENGTH: {MIN_LENGTH}; MAX_LENGTH: {MAX_LENGTH}')
     pkl_path = path.split(os.sep)[-1].split(".")[0] + "_vocabulary.pkl"
-    vocab_cache_path = tmp_path + pkl_path
+    vocab_cache_path = os.path.join(tmp_path, pkl_path)
     global WORDS
     global REVERSE_WORDS
     if not os.path.exists(vocab_cache_path):
@@ -321,8 +321,8 @@ def prepare_pair_data(path, vocabulary_size, tmp_path, min_length, max_length, r
 
 
     # don't use these for processing, but pass for ease of use later on
-    input_side = Lang("in", vocabulary_size)
-    output_side = Lang("out", vocabulary_size, reverse)
+    input_side = Lang("in", tmp_path, vocabulary_size)
+    output_side = Lang("out", tmp_path, vocabulary_size, reverse)
 
     print("Setting up queues")
     # some nasty multiprocessing

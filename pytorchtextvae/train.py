@@ -6,9 +6,9 @@ import shutil
 from datasets import get_vocabulary, prepare_pair_data
 from model import *
 
-def train_vae(data_path, tmp_path=f'tmp{os.sep}',
-                encoder_hidden_size=512, n_encoder_layers=2, decoder_hidden_size=512, embed_size=128,
-                condition_size=130, max_vocab=-1, lr=0.0001, n_steps=1500000, grad_clip=10.0,
+def train_vae(data_path, tmp_path=f'..{os.sep}tmp',
+                encoder_hidden_size=512, n_encoder_layers=2, decoder_hidden_size=512, z_size=128,
+                condition_size=16, max_vocab=-1, lr=0.0001, n_steps=1500000, grad_clip=10.0,
                 save_every=None, log_every_n_seconds=5*60, log_every_n_steps=1000,
                 kld_start_inc=10000, habits_lambda=0.2,
                 word_dropout=0.25, temperature=1.0, temperature_min=0.75,
@@ -45,12 +45,12 @@ def train_vae(data_path, tmp_path=f'tmp{os.sep}',
         input_side, output_side, pairs, dataset = prepare_pair_data(data_path, max_vocab, tmp_path, min_gen_len, max_gen_len, reverse=True)
 
         with open(cache_file, "wb") as f:
-            pickle.dump((input_side, output_side, pairs, dataset, embed_size, condition_size, decoder_hidden_size, encoder_hidden_size, n_encoder_layers), f)
+            pickle.dump((input_side, output_side, pairs, dataset, z_size, condition_size, decoder_hidden_size, encoder_hidden_size, n_encoder_layers), f)
     else:
         start_load = time.time()
         print("Fetching cached info at {}".format(cache_file))
         with open(cache_file, "rb") as f:
-            input_side, output_side, pairs, dataset, embed_size, condition_size, decoder_hidden_size, encoder_hidden_size, n_encoder_layers = pickle.load(f)
+            input_side, output_side, pairs, dataset, z_size, condition_size, decoder_hidden_size, encoder_hidden_size, n_encoder_layers = pickle.load(f)
         end_load = time.time()
         print(f"Cache {cache_file} loaded (load time: {end_load - start_load:.2f}s)")
 
@@ -60,7 +60,7 @@ def train_vae(data_path, tmp_path=f'tmp{os.sep}',
 
     print("Initializing model")
     n_words = input_side.n_words
-    e = EncoderRNN(n_words, encoder_hidden_size, embed_size, n_encoder_layers, bidirectional=True).to(DEVICE)
+    e = EncoderRNN(n_words, encoder_hidden_size, z_size, n_encoder_layers, bidirectional=True).to(DEVICE)
 
     # custom weights initialization # TODO: should we do this if using saved_vae?
     def rnn_weights_init(m):
@@ -71,7 +71,7 @@ def train_vae(data_path, tmp_path=f'tmp{os.sep}',
                     if "weight" in k:
                         v.data.normal_(0.0, 0.02)
 
-    d = DecoderRNN(embed_size, condition_size, decoder_hidden_size, n_words, 1, word_dropout=word_dropout).to(DEVICE)
+    d = DecoderRNN(z_size, len(dataset.genre_set), condition_size, decoder_hidden_size, n_words, 1, word_dropout=word_dropout).to(DEVICE)
     rnn_weights_init(d)
 
     vae = VAE(e, d, n_steps).to(DEVICE)
@@ -153,7 +153,7 @@ def train_vae(data_path, tmp_path=f'tmp{os.sep}',
                 EOS_str = f' {output_side.index_to_word(torch.LongTensor([EOS_token]))} '
 
                 if generate_samples:
-                    rand_z = torch.randn(embed_size).unsqueeze(0).to(DEVICE)
+                    rand_z = torch.randn(z_size).unsqueeze(0).to(DEVICE)
                     fixed_condition = torch.FloatTensor(dataset.encode_genres(['vapor soul'])).to(DEVICE)
 
                     generated = vae.decoder.generate(rand_z, fixed_condition, max_gen_len, temperature, DEVICE)

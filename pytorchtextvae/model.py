@@ -138,7 +138,7 @@ class EncoderRNN(Encoder):
 # Decode from Z into sequence
 
 class DecoderRNN(nn.Module):
-    def __init__(self, z_size, condition_size, hidden_size, output_size, n_layers=1, word_dropout=1.):
+    def __init__(self, z_size, n_conditions, condition_size, hidden_size, output_size, n_layers=1, word_dropout=1.):
         super(DecoderRNN, self).__init__()
         self.output_size = output_size
         self.n_layers = n_layers
@@ -149,6 +149,7 @@ class DecoderRNN(nn.Module):
         self.embed = nn.Embedding(output_size, hidden_size)
         self.gru = nn.GRU(hidden_size + input_size, hidden_size, n_layers)
         self.i2h = nn.Linear(input_size, hidden_size)
+        self.c2h = nn.Linear(n_conditions, condition_size)
         self.h2o = nn.Linear(hidden_size * 2, hidden_size)
         self.out = nn.Linear(hidden_size + input_size, output_size)
 
@@ -177,8 +178,9 @@ class DecoderRNN(nn.Module):
         outputs = Variable(torch.zeros(n_steps, 1, self.output_size)).to(device)
 
         input = Variable(torch.LongTensor([SOS_token])).to(device)
+        squashed_condition = self.c2h(condition)
 
-        decode_embed = torch.cat([z, condition], 1)
+        decode_embed = torch.cat([z, squashed_condition], 1)
         hidden = self.i2h(decode_embed).unsqueeze(0).repeat(self.n_layers, 1, 1)
 
         for i in range(n_steps):
@@ -209,7 +211,8 @@ class DecoderRNN(nn.Module):
         if condition.dim() == 1:
             condition = condition.unsqueeze(0)
 
-        decode_embed = torch.cat([z, condition], 1)
+        squashed_condition = self.c2h(condition)
+        decode_embed = torch.cat([z, squashed_condition], 1)
         hidden = self.i2h(decode_embed).unsqueeze(0).repeat(self.n_layers, 1, 1)
 
         for i in range(n_steps):
@@ -261,9 +264,9 @@ class VAE(nn.Module):
 if __name__ == '__main__':
     device = torch.device(f'cuda:{torch.cuda.current_device()}' if torch.cuda.is_available() else 'cpu')
     hidden_size = 20
-    embed_size = 10
-    e = EncoderRNN(n_characters, hidden_size, embed_size).to(device)
-    d = DecoderRNN(embed_size, hidden_size, n_characters, 2).to(device)
+    z_size = 10
+    e = EncoderRNN(n_characters, hidden_size, z_size).to(device)
+    d = DecoderRNN(z_size, hidden_size, n_characters, 2).to(device)
     vae = VAE(e, d)
     m, l, z, decoded = vae(char_tensor('@spro'))
     print('m =', m.size())
