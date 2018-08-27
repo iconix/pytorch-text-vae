@@ -71,7 +71,7 @@ def train_vae(data_path, tmp_path=f'..{os.sep}tmp',
                     if "weight" in k:
                         v.data.normal_(0.0, 0.02)
 
-    d = DecoderRNN(z_size, len(dataset.genre_set), condition_size, decoder_hidden_size, n_words, 1, word_dropout=word_dropout).to(DEVICE)
+    d = DecoderRNN(z_size, len(dataset.genre_set) + 1, condition_size, decoder_hidden_size, n_words, 1, word_dropout=word_dropout).to(DEVICE)
     rnn_weights_init(d)
 
     vae = VAE(e, d, n_steps).to(DEVICE)
@@ -122,12 +122,10 @@ def train_vae(data_path, tmp_path=f'..{os.sep}tmp',
                 temperature -= temperature_dec
 
             ll_loss = criterion(decoded, target)
-            #job.record(step, loss.data[0])
 
             KLD = -0.5 * (2 * l - torch.pow(m, 2) - torch.pow(torch.exp(l), 2) + 1)
             # ha bits , like free bits but over whole layer
             clamp_KLD = torch.clamp(KLD.mean(), min=habits_lambda).squeeze()
-            #neg_KLD = -1 * clamp_KLD
             loss = ll_loss + clamp_KLD * vae.kld_weight
 
             loss.backward()
@@ -135,9 +133,7 @@ def train_vae(data_path, tmp_path=f'..{os.sep}tmp',
             if step > kld_start_inc and vae.kld_weight < vae.kld_max:
                 vae.kld_weight += vae.kld_inc
 
-            # print('from', next(vae.parameters()).grad.data[0][0])
             ec = torch.nn.utils.clip_grad_norm_(vae.parameters(), grad_clip)
-            # print('to  ', next(vae.parameters()).grad.data[0][0])
             optimizer.step()
 
             def log_and_generate(tag, value):
@@ -145,6 +141,8 @@ def train_vae(data_path, tmp_path=f'..{os.sep}tmp',
                     print('|%s|[%d] %.4f (k=%.4f, t=%.4f, kl=%.4f, ckl=%.4f,  nll=%.4f, ec=%.4f)' % (
                         tag, value, loss.item(), vae.kld_weight, temperature, KLD.data.mean(), clamp_KLD.item(), ll_loss.item(), ec
                     ))
+                    with open('plots.txt', 'a') as f:
+                        f.write(f'{value}\t{loss.item()}\t{ll_loss.item()}\t{KLD.data.mean()}\n')
                 elif tag == "time":
                     print('|%s|[%.4f] %.4f (k=%.4f, t=%.4f, kl=%.4f, ckl=%.4f, nll=%.4f,  ec=%.4f)' % (
                         tag, value, loss.item(), vae.kld_weight, temperature, KLD.data.mean(), clamp_KLD.item(), ll_loss.item(), ec

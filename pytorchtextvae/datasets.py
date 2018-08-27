@@ -54,9 +54,13 @@ class Dataset:
                 yield unidecode.unidecode(line)
 
     def encode_genres(self, genres):
-        e = np.zeros(len(self.genre_set))
+        e = np.zeros(len(self.genre_set) + 1)
         for g in genres:
-            e[self.genre_to_idx[g]] = 1
+            if g in self.genre_to_idx:
+                e[self.genre_to_idx[g]] = 1
+            else:
+                # for unknown genres
+                e[len(e) - 1] = 1
         return e
 
     def decode_genres(self, tensor):
