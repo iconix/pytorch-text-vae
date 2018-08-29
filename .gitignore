@@ -3,3 +3,4 @@
 *.swo
 *.pt
 __pycache__
+*.egg-info/

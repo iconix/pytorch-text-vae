@@ -67,7 +67,10 @@ class Dataset:
         genres = []
         for i, x in enumerate(tensor.squeeze()):
             if x.item() == 1:
-                genres.append(self.idx_to_genre[i])
+                if i in self.idx_to_genre:
+                    genres.append(self.idx_to_genre[i])
+                else:
+                    genres.append('UNK')
         return genres
 
     def read_json_gen(self):
