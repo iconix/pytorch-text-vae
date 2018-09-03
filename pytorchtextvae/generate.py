@@ -27,6 +27,7 @@ def load_model(saved_vae, stored_info, device, cache_path=str(Path('../tmp')), s
         d = model.DecoderRNN(Z_SIZE, len(dataset.genre_set) + 1, CONDITION_SIZE, DECODER_HIDDEN_SIZE, input_side.n_words, 1, word_dropout=0)
         vae = model.VAE(e, d).to(device)
         vae.load_state_dict(torch.load(saved_vae, map_location=lambda storage, loc: storage))
+        vae.eval()
         print(f"Trained for {vae.steps_seen} steps (load time: {time.time() - start_load_model:.2f}s)")
 
         print("Setting new random seed")

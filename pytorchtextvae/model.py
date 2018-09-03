@@ -150,6 +150,7 @@ class DecoderRNN(nn.Module):
         self.gru = nn.GRU(hidden_size + input_size, hidden_size, n_layers)
         self.i2h = nn.Linear(input_size, hidden_size)
         self.c2h = nn.Linear(n_conditions, condition_size)
+        #self.dropout = nn.Dropout()
         self.h2o = nn.Linear(hidden_size * 2, hidden_size)
         self.out = nn.Linear(hidden_size + input_size, output_size)
 
@@ -178,7 +179,9 @@ class DecoderRNN(nn.Module):
         outputs = Variable(torch.zeros(n_steps, 1, self.output_size)).to(device)
 
         input = Variable(torch.LongTensor([SOS_token])).to(device)
+        #squashed_condition = self.c2h(self.dropout(condition))
         squashed_condition = self.c2h(condition)
+
 
         decode_embed = torch.cat([z, squashed_condition], 1)
         hidden = self.i2h(decode_embed).unsqueeze(0).repeat(self.n_layers, 1, 1)
@@ -204,23 +207,27 @@ class DecoderRNN(nn.Module):
 
         return outputs.squeeze(1)
 
-    def generate(self, z, condition, n_steps, temperature, device, max_sample=MAX_SAMPLE, trunc_sample=TRUNCATED_SAMPLE):
+    def generate_with_embed(self, embed, n_steps, temperature, device, max_sample=MAX_SAMPLE, trunc_sample=TRUNCATED_SAMPLE):
         outputs = Variable(torch.zeros(n_steps, 1, self.output_size)).to(device)
         input = Variable(torch.LongTensor([SOS_token])).to(device)
 
+        hidden = self.i2h(embed).unsqueeze(0).repeat(self.n_layers, 1, 1)
+
+        for i in range(n_steps):
+            output, hidden = self.step(i, embed, input, hidden)
+            outputs[i] = output
+            input, top_i = self.sample(output, temperature, device, max_sample=MAX_SAMPLE, trunc_sample=TRUNCATED_SAMPLE)
+            #if top_i == EOS: break
+        return outputs.squeeze(1)
+
+    def generate(self, z, condition, n_steps, temperature, device, max_sample=MAX_SAMPLE, trunc_sample=TRUNCATED_SAMPLE):
         if condition.dim() == 1:
             condition = condition.unsqueeze(0)
 
         squashed_condition = self.c2h(condition)
         decode_embed = torch.cat([z, squashed_condition], 1)
-        hidden = self.i2h(decode_embed).unsqueeze(0).repeat(self.n_layers, 1, 1)
 
-        for i in range(n_steps):
-            output, hidden = self.step(i, decode_embed, input, hidden)
-            outputs[i] = output
-            input, top_i = self.sample(output, temperature, device, max_sample=MAX_SAMPLE, trunc_sample=TRUNCATED_SAMPLE)
-            #if top_i == EOS: break
-        return outputs.squeeze(1)
+        return self.generate_with_embed(decode_embed, n_steps, temperature, device, max_sample, trunc_sample)
 
     def step(self, s, decode_embed, input, hidden):
         # print('[DecoderRNN.step] s =', s, 'decode_embed =', decode_embed.size(), 'i =', input.size(), 'h =', hidden.size())

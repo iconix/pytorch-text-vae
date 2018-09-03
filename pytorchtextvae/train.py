@@ -101,6 +101,7 @@ def train_vae(data_path, tmp_path=f'..{os.sep}tmp',
     optimizer = torch.optim.Adam(vae.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss()
     criterion.to(DEVICE)
+    vae.train()
 
     def save():
         save_state_filename = filename + '_state.pt'
