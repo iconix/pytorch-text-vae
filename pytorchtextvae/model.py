@@ -160,13 +160,15 @@ class DecoderRNN(nn.Module):
         if max_sample:
             # Sample top value only
             top_i = output.data.topk(1)[1].item()
-
         else:
             # Sample from the network as a multinomial distribution
             if trunc_sample:
                 # Sample from top k values only
                 k = 10
-                output = output[:k]
+                new_output = torch.empty_like(output).fill_(float('-inf'))
+                top_v, top_i = output.data.topk(k)
+                new_output.data.scatter_(1, top_i, top_v)
+                output = new_output
 
             output_dist = output.data.view(-1).div(temperature).exp()
             top_i = torch.multinomial(output_dist, 1)[0]
@@ -216,7 +218,7 @@ class DecoderRNN(nn.Module):
         for i in range(n_steps):
             output, hidden = self.step(i, embed, input, hidden)
             outputs[i] = output
-            input, top_i = self.sample(output, temperature, device, max_sample=MAX_SAMPLE, trunc_sample=TRUNCATED_SAMPLE)
+            input, top_i = self.sample(output, temperature, device, max_sample=max_sample, trunc_sample=trunc_sample)
             #if top_i == EOS: break
         return outputs.squeeze(1)
 
