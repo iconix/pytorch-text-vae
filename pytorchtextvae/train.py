@@ -3,7 +3,7 @@ import numpy as np
 import os
 import shutil
 
-from datasets import get_vocabulary, prepare_pair_data
+from datasets import Condition, get_vocabulary, prepare_pair_data
 from model import *
 
 def train_vae(data_path, tmp_path=f'..{os.sep}tmp',
@@ -11,7 +11,7 @@ def train_vae(data_path, tmp_path=f'..{os.sep}tmp',
                 condition_size=16, max_vocab=-1, lr=0.0001, n_steps=1500000, grad_clip=10.0,
                 save_every=None, log_every_n_seconds=5*60, log_every_n_steps=1000,
                 kld_start_inc=10000, habits_lambda=0.2,
-                word_dropout=0.25, temperature=1.0, temperature_min=0.75,
+                word_dropout=0.25, temperature=1.0, temperature_min=0.75, condition_on=0,
                 use_cuda=True, generate_samples=True, generate_interpolations=True, min_gen_len=10, max_gen_len=200):
 
     args_passed = locals()
@@ -42,15 +42,28 @@ def train_vae(data_path, tmp_path=f'..{os.sep}tmp',
         if not os.path.exists(cache_path):
             os.mkdir(cache_path)
 
-        input_side, output_side, pairs, dataset = prepare_pair_data(data_path, max_vocab, tmp_path, min_gen_len, max_gen_len, reverse=True)
+        if condition_on < 0 or condition_on > (len(Condition) - 1):
+            print(f'Invalid condition_on value of {condition_on}. Falling back to {Condition.NONE}')
+            condition_on = Condition.NONE
+        else:
+            condition_on = Condition(condition_on)
+
+        # TODO: condition_size for audio features == len(audio_features)
+
+        input_side, output_side, pairs, dataset = prepare_pair_data(data_path, max_vocab, tmp_path, min_gen_len, max_gen_len, condition_on, reverse=True)
+
+        if condition_on == Condition.NONE:
+            condition_size = 0
+        elif condition_on == Condition.AF:
+            condition_size = dataset.n_conditions
 
         with open(cache_file, "wb") as f:
-            pickle.dump((input_side, output_side, pairs, dataset, z_size, condition_size, decoder_hidden_size, encoder_hidden_size, n_encoder_layers), f)
+            pickle.dump((input_side, output_side, pairs, dataset, z_size, condition_size, condition_on, decoder_hidden_size, encoder_hidden_size, n_encoder_layers), f)
     else:
         start_load = time.time()
         print("Fetching cached info at {}".format(cache_file))
         with open(cache_file, "rb") as f:
-            input_side, output_side, pairs, dataset, z_size, condition_size, decoder_hidden_size, encoder_hidden_size, n_encoder_layers = pickle.load(f)
+            input_side, output_side, pairs, dataset, z_size, condition_size, condition_on, decoder_hidden_size, encoder_hidden_size, n_encoder_layers = pickle.load(f)
         end_load = time.time()
         print(f"Cache {cache_file} loaded (load time: {end_load - start_load:.2f}s)")
 
@@ -59,6 +72,7 @@ def train_vae(data_path, tmp_path=f'..{os.sep}tmp',
     random_state.shuffle(pairs)
 
     print("Initializing model")
+    print(f'condition_on {condition_on.name} (condition_size: {condition_size})')
     n_words = input_side.n_words
     e = EncoderRNN(n_words, encoder_hidden_size, z_size, n_encoder_layers, bidirectional=True).to(DEVICE)
 
@@ -71,7 +85,7 @@ def train_vae(data_path, tmp_path=f'..{os.sep}tmp',
                     if "weight" in k:
                         v.data.normal_(0.0, 0.02)
 
-    d = DecoderRNN(z_size, len(dataset.genre_set) + 1, condition_size, decoder_hidden_size, n_words, 1, word_dropout=word_dropout).to(DEVICE)
+    d = DecoderRNN(z_size, dataset.n_conditions, condition_size, decoder_hidden_size, n_words, 1, word_dropout=word_dropout).to(DEVICE)
     rnn_weights_init(d)
 
     vae = VAE(e, d, n_steps).to(DEVICE)
@@ -153,7 +167,12 @@ def train_vae(data_path, tmp_path=f'..{os.sep}tmp',
 
                 if generate_samples:
                     rand_z = torch.randn(z_size).unsqueeze(0).to(DEVICE)
-                    fixed_condition = torch.FloatTensor(dataset.encode_genres(['vapor soul'])).to(DEVICE)
+                    if condition_on == Condition.GENRE:
+                        fixed_condition = torch.FloatTensor(dataset.encode_conditions(['vapor soul'])).to(DEVICE)
+                    elif condition_on == Condition.AF:
+                        fixed_condition = torch.FloatTensor(dataset.get_mean_condition(pairs)).to(DEVICE)
+                    else:
+                        fixed_condition = None
 
                     generated = vae.decoder.generate(rand_z, fixed_condition, max_gen_len, temperature, DEVICE)
                     generated_str = float_word_tensor_to_string(output_side, generated)

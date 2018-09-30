@@ -5,7 +5,10 @@ import torch.nn.functional as F
 from torch.nn import Parameter
 from functools import wraps
 
-from pytorchtextvae.datasets import *
+if __package__ is None or __package__ == '':
+    from datasets import *
+else:
+    from pytorchtextvae.datasets import *
 
 MAX_SAMPLE = False
 TRUNCATED_SAMPLE = True
@@ -149,7 +152,8 @@ class DecoderRNN(nn.Module):
         self.embed = nn.Embedding(output_size, hidden_size)
         self.gru = nn.GRU(hidden_size + input_size, hidden_size, n_layers)
         self.i2h = nn.Linear(input_size, hidden_size)
-        self.c2h = nn.Linear(n_conditions, condition_size)
+        if n_conditions > 0 and condition_size > 0 and n_conditions != condition_size:
+            self.c2h = nn.Linear(n_conditions, condition_size)
         #self.dropout = nn.Dropout()
         self.h2o = nn.Linear(hidden_size * 2, hidden_size)
         self.out = nn.Linear(hidden_size + input_size, output_size)
@@ -171,7 +175,12 @@ class DecoderRNN(nn.Module):
                 output = new_output
 
             output_dist = output.data.view(-1).div(temperature).exp()
-            top_i = torch.multinomial(output_dist, 1)[0]
+            if len(torch.nonzero(output_dist)) > 0:
+                top_i = torch.multinomial(output_dist, 1)[0]
+            else:
+                # TODO: how does this happen?
+                print(f'[WARNING] output_dist is all zeroes')
+                top_i = UNK_token
 
         input = Variable(torch.LongTensor([top_i])).to(device)
         return input, top_i
@@ -181,11 +190,17 @@ class DecoderRNN(nn.Module):
         outputs = Variable(torch.zeros(n_steps, 1, self.output_size)).to(device)
 
         input = Variable(torch.LongTensor([SOS_token])).to(device)
-        #squashed_condition = self.c2h(self.dropout(condition))
-        squashed_condition = self.c2h(condition)
+        if condition is None:
+            decode_embed = z
+        else:
+            if hasattr(self, 'c2h'):
+                #squashed_condition = self.c2h(self.dropout(condition))
+                squashed_condition = self.c2h(condition)
+                decode_embed = torch.cat([z, squashed_condition], 1)
+            else:
+                decode_embed = torch.cat([z, condition], 1)
 
 
-        decode_embed = torch.cat([z, squashed_condition], 1)
         hidden = self.i2h(decode_embed).unsqueeze(0).repeat(self.n_layers, 1, 1)
 
         for i in range(n_steps):
@@ -202,7 +217,7 @@ class DecoderRNN(nn.Module):
             if use_teacher_forcing:
                 input = inputs[i]
             else:
-                input, top_i = self.sample(output, temperature, device)
+                input, top_i = self.sample(output, temperature, device, max_sample=True)
 
             if input.dim() == 0:
                 input = input.unsqueeze(0)
@@ -223,11 +238,18 @@ class DecoderRNN(nn.Module):
         return outputs.squeeze(1)
 
     def generate(self, z, condition, n_steps, temperature, device, max_sample=MAX_SAMPLE, trunc_sample=TRUNCATED_SAMPLE):
-        if condition.dim() == 1:
-            condition = condition.unsqueeze(0)
+        if condition is None:
+            decode_embed = z
+        else:
+            if condition.dim() == 1:
+                condition = condition.unsqueeze(0)
 
-        squashed_condition = self.c2h(condition)
-        decode_embed = torch.cat([z, squashed_condition], 1)
+            if hasattr(self, 'c2h'):
+                #squashed_condition = self.c2h(self.dropout(condition))
+                squashed_condition = self.c2h(condition)
+                decode_embed = torch.cat([z, squashed_condition], 1)
+            else:
+                decode_embed = torch.cat([z, condition], 1)
 
         return self.generate_with_embed(decode_embed, n_steps, temperature, device, max_sample, trunc_sample)
 

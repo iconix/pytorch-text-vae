@@ -10,6 +10,7 @@ except ImportError:
     import queue as Queue
 import multiprocessing as mp
 import dill as pickle
+from enum import Enum
 
 import numpy as np
 import re
@@ -17,33 +18,33 @@ import sys
 import unidecode
 import unicodedata
 import collections
+import pandas as pd
 
 SOS_token = 0
 EOS_token = 1
 UNK_token = 2
 N_CORE = 24
 
+class Condition(Enum):
+    NONE = 0
+    GENRE = 1
+    AF = 2 # audio features
+
 class Dataset:
-    from enum import Enum
     class DataType(Enum):
-        DEFAULT = 1
-        JSON = 2
-        QUILT = 3
+        DEFAULT = 0
+        JSON = 1
 
     def __init__(self, filename):
         self.filename = filename
 
-        if filename.endswith('.quilt'):
-            self.data_type = self.DataType.QUILT
-        elif filename.endswith('.json'):
+        if filename.endswith('.json'):
             self.data_type = self.DataType.JSON
         else:
             self.data_type = self.DataType.DEFAULT
 
     def __iter__(self):
-        if self.data_type == self.DataType.QUILT:
-            return self.read_quilt_gen()
-        elif self.data_type == self.DataType.JSON:
+        if self.data_type == self.DataType.JSON:
             return self.read_json_gen()
         else:
             return self.read_file_line_gen()
@@ -53,9 +54,28 @@ class Dataset:
             for line in f:
                 yield unidecode.unidecode(line)
 
-    def encode_genres(self, genres):
-        e = np.zeros(len(self.genre_set) + 1)
-        for g in genres:
+    def encode_conditions(self, conditions):
+        raise NotImplementedError
+
+    def decode_conditions(self, tensor):
+        raise NotImplementedError
+
+    def read_json_gen(self):
+        df = pd.read_json(self.filename)
+
+        self.n_conditions = -1
+
+        for i, row in df.iterrows():
+            for sent in row.content_sentences:
+                yield sent
+
+class GenreDataset(Dataset):
+    def __init__(self, filename):
+        super(GenreDataset, self).__init__(filename)
+
+    def encode_conditions(self, conditions):
+        e = np.zeros(self.n_conditions)
+        for g in conditions:
             if g in self.genre_to_idx:
                 e[self.genre_to_idx[g]] = 1
             else:
@@ -63,7 +83,7 @@ class Dataset:
                 e[len(e) - 1] = 1
         return e
 
-    def decode_genres(self, tensor):
+    def decode_conditions(self, tensor):
         genres = []
         for i, x in enumerate(tensor.squeeze()):
             if x.item() == 1:
@@ -74,47 +94,57 @@ class Dataset:
         return genres
 
     def read_json_gen(self):
-        import pandas as pd
         df = pd.read_json(self.filename)
 
-        self.genre_set = set([g for gg in df.spotify_genres for g in gg])
-        self.genre_to_idx = {unique_g: i for i, unique_g in enumerate(sorted(self.genre_set))}
-        self.idx_to_genre = {i: unique_g for i, unique_g in enumerate(sorted(self.genre_set))}
+        condition_set = set([g for gg in df.spotify_genres for g in gg])
+        self.n_conditions = len(condition_set) + 1
+        self.genre_to_idx = {unique_g: i for i, unique_g in enumerate(sorted(condition_set))}
+        self.idx_to_genre = {i: unique_g for i, unique_g in enumerate(sorted(condition_set))}
 
         for i, row in df.iterrows():
-            gs = self.encode_genres(row.spotify_genres)
+            gs = self.encode_conditions(row.spotify_genres)
             for sent in row.content_sentences:
                 yield sent, gs
 
-    def read_quilt_gen(self):
-        # TODO: segmentation fault (core dumped) issue
+class AudioFeatureDataset(Dataset):
+    def __init__(self, filename):
+        super(AudioFeatureDataset, self).__init__(filename)
 
-        # read config of format:
-            # PACKAGE
-            # MODULE_NAME
-            # NODE_NAME
+    def encode_conditions(self, conditions):
+        return np.array([v for (k, v) in sorted(conditions.items()) if k not in self.ignore_keys])
 
-        configs = []
-        with open(self.filename) as f:
-            for line in f:
-                configs.append(line.strip())
+    def decode_conditions(self, tensor):
+        afs = {}
+        for i, x in enumerate(tensor.squeeze()):
+            afs[self.idx_to_af[i]] = x.item()
+        return afs
 
-        if len(configs) != 3:
-            print('ERROR: invalid .quilt config file. Expecting 3 lines with PACKAGE, MODULE_NAME, and NODE_NAME.')
-            sys.exit()
+    def get_mean_condition(self, pairs):
+        if not hasattr(self, 'mean_condition'):
+            conditions = np.array([p[2] for p in pairs])
+            self.mean_condition = np.mean(conditions, axis=0)
 
-        import quilt
-        pkg_name = f'{configs[0].split(".")[-1]}/{configs[1]}'
-        quilt.install(pkg_name, force=True) # overwrites local install
+        return self.mean_condition
 
-        from importlib import import_module
-        import_module(f'{configs[0]}.{configs[1]}') # e.g., import_module('quilt.data.iconix.deephypebot')
+    def read_json_gen(self):
+        import json
+        df = pd.read_json(self.filename)
 
-        # e.g., df = quilt.data.iconix.deephypebot.reviews_and_metadata_5yrs()
-        df = getattr(sys.modules[f'{configs[0]}.{configs[1]}'], configs[2])()
+        # all rows should have the same condition keys
+        self.ignore_keys = ['analysis_url', 'duration_ms', 'id', 'track_href', 'type', 'uri']
+        condition_list = [k for (k, v) in sorted(json.loads(df.audio_features[0].replace("'", "\"")).items()) if k not in self.ignore_keys]
 
-        print(df.head())
-        sys.exit()
+        self.n_conditions = len(condition_list)
+        self.idx_to_af = {i: c for i, c in enumerate(condition_list)}
+
+        for i, row in df.iterrows():
+            try:
+                fs = self.encode_conditions(json.loads(row.audio_features.replace("'", "\"")))
+            except json.decoder.JSONDecodeError:
+                # TODO: why audio_features = None ever?
+                fs = np.zeros(self.n_conditions)
+            for sent in row.content_sentences:
+                yield sent, fs
 
 
 norvig_list = None
@@ -231,11 +261,16 @@ def _get_line(data_type, elem):
 
     return line
 
-def _setup(path, vocabulary_size):
+def _setup(path, vocabulary_size, condition_on):
     global WORDS
     global REVERSE_WORDS
     wc = collections.Counter()
-    dataset = Dataset(path)
+    if condition_on == Condition.GENRE:
+        dataset = GenreDataset(path)
+    elif condition_on == Condition.AF:
+        dataset = AudioFeatureDataset(path)
+    else:
+        dataset = Dataset(path)
     for n, elem in enumerate(iter(dataset)):
         if n % 100000 == 0:
             print("Fetching vocabulary from line {}".format(n))
@@ -252,7 +287,7 @@ def _setup(path, vocabulary_size):
             continue
 
     the_words = ["SOS", "EOS", "UNK"]
-    the_reverse_words = [w[::-1] for w in ["SOS", "EOS", "UNK"]]
+    the_reverse_words = [w[::-1] for w in the_words]
     the_words += [wi[0] for wi in wc.most_common()[:vocabulary_size - 3]]
     the_reverse_words += [wi[0][::-1] for wi in wc.most_common()[:vocabulary_size - 3]]
 
@@ -294,13 +329,13 @@ def process(q, oq, iolock):
         r = [(proc_line(s[0], True), s[1]) if isinstance(s, tuple) else proc_line(s, True) for s in stuff]
         r = [ri for ri in r if ri != None and ri[0] != None]
         # flatten any tuples
-        r = [ri[0] + (ri[1], ) if isinstance(ri, tuple) else ri for ri in r]
+        r = [ri[0] + (ri[1], ) if isinstance(ri[0], tuple) else ri for ri in r]
         if len(r) > 0:
             oq.put(r)
 
 
 # https://stackoverflow.com/questions/43078980/python-multiprocessing-with-generator
-def prepare_pair_data(path, vocabulary_size, tmp_path, min_length, max_length, reverse=False):
+def prepare_pair_data(path, vocabulary_size, tmp_path, min_length, max_length, condition_on, reverse=False):
     global MIN_LENGTH
     global MAX_LENGTH
     MIN_LENGTH, MAX_LENGTH = min_length, max_length
@@ -314,7 +349,7 @@ def prepare_pair_data(path, vocabulary_size, tmp_path, min_length, max_length, r
     if not os.path.exists(vocab_cache_path):
         print("Vocabulary cache {} not found".format(vocab_cache_path))
         print("Prepping vocabulary")
-        _setup(path, vocabulary_size)
+        _setup(path, vocabulary_size, condition_on)
         with open(vocab_cache_path, "wb") as f:
             pickle.dump((WORDS, REVERSE_WORDS), f)
     else:
@@ -355,7 +390,13 @@ def prepare_pair_data(path, vocabulary_size, tmp_path, min_length, max_length, r
     avg_time_per_block = 30
     status_every = 100000
     print("Starting block processing")
-    dataset = Dataset(path)
+    if condition_on == Condition.GENRE:
+        dataset = GenreDataset(path)
+    elif condition_on == Condition.AF:
+        dataset = AudioFeatureDataset(path)
+    else:
+        dataset = Dataset(path)
+
     for n, elem in enumerate(iter(dataset)):
         curr_block.append(elem)
         if len(curr_block) > block_size:
