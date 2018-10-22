@@ -30,21 +30,13 @@ class Condition(Enum):
     GENRE = 1
     AF = 2 # audio features
 
-class Dataset:
-    class DataType(Enum):
-        DEFAULT = 0
-        JSON = 1
-
-    def __init__(self, filename):
+class DataSplit:
+    def __init__(self, filename, data_type):
         self.filename = filename
-
-        if filename.endswith('.json'):
-            self.data_type = self.DataType.JSON
-        else:
-            self.data_type = self.DataType.DEFAULT
+        self.data_type = data_type
 
     def __iter__(self):
-        if self.data_type == self.DataType.JSON:
+        if self.data_type == Dataset.DataType.JSON:
             return self.read_json_gen()
         else:
             return self.read_file_line_gen()
@@ -53,12 +45,6 @@ class Dataset:
         with open(self.filename) as f:
             for line in f:
                 yield unidecode.unidecode(line)
-
-    def encode_conditions(self, conditions):
-        raise NotImplementedError
-
-    def decode_conditions(self, tensor):
-        raise NotImplementedError
 
     def read_json_gen(self):
         df = pd.read_json(self.filename)
@@ -69,9 +55,79 @@ class Dataset:
             for sent in row.content_sentences:
                 yield sent
 
-class GenreDataset(Dataset):
+class GenreDataSplit(DataSplit):
     def __init__(self, filename):
-        super(GenreDataset, self).__init__(filename)
+        super(GenreDataSplit, self).__init__(filename, data_type)
+
+    def read_json_gen(self):
+        df = pd.read_json(self.filename)
+
+        condition_set = set([g for gg in df.spotify_genres for g in gg])
+        self.n_conditions = len(condition_set) + 1
+        self.genre_to_idx = {unique_g: i for i, unique_g in enumerate(sorted(condition_set))}
+        self.idx_to_genre = {i: unique_g for i, unique_g in enumerate(sorted(condition_set))}
+
+        for i, row in df.iterrows():
+            gs = self.encode_conditions(row.spotify_genres)
+            for sent in row.content_sentences:
+                yield sent, gs
+
+class AFDataSplit(DataSplit):
+    def __init__(self, filename):
+        super(AFDataSplit, self).__init__(filename, data_type)
+
+    def read_json_gen(self):
+        import json
+        df = pd.read_json(self.filename)
+
+        # all rows should have the same condition keys
+        self.ignore_keys = ['analysis_url', 'duration_ms', 'id', 'track_href', 'type', 'uri']
+        condition_list = [k for (k, v) in sorted(json.loads(df.audio_features[0].replace("'", "\"")).items()) if k not in self.ignore_keys]
+
+        self.n_conditions = len(condition_list)
+        self.idx_to_af = {i: c for i, c in enumerate(condition_list)}
+
+        for i, row in df.iterrows():
+            try:
+                fs = self.encode_conditions(json.loads(row.audio_features.replace("'", "\"")))
+            except json.decoder.JSONDecodeError:
+                # TODO: why audio_features = None ever?
+                fs = np.zeros(self.n_conditions)
+            for sent in row.content_sentences:
+                yield sent, fs
+
+class Dataset:
+    class DataType(Enum):
+        DEFAULT = 0
+        JSON = 1
+
+    def __init__(self, trn_path, test_path=None):
+        if trn_path.endswith('.json'):
+            self.data_type = Dataset.DataType.JSON
+        else:
+            self.data_type = Dataset.DataType.DEFAULT
+
+        self.trn_split = DataSplit(trn_path, self.data_type)
+        if test_path:
+            self.test_split = DataSplit(test_path, self.data_type)
+        else:
+            self.test_split = None
+
+    def encode_conditions(self, conditions):
+        raise NotImplementedError
+
+    def decode_conditions(self, tensor):
+        raise NotImplementedError
+
+class GenreDataset(Dataset):
+    def __init__(self, trn_path, test_path=None):
+        super(GenreDataset, self).__init__(trn_path, test_path)
+
+        self.trn_split = GenreDataSplit(trn_path, self.data_type)
+        if test_path:
+            self.test_split = GenreDataSplit(test_path, self.data_type)
+        else:
+            self.test_split = None
 
     def encode_conditions(self, conditions):
         e = np.zeros(self.n_conditions)
@@ -93,22 +149,15 @@ class GenreDataset(Dataset):
                     genres.append('UNK')
         return genres
 
-    def read_json_gen(self):
-        df = pd.read_json(self.filename)
+class AFDataset(Dataset):
+    def __init__(self, trn_path, test_path=None):
+        super(AFDataset, self).__init__(trn_path, test_path)
 
-        condition_set = set([g for gg in df.spotify_genres for g in gg])
-        self.n_conditions = len(condition_set) + 1
-        self.genre_to_idx = {unique_g: i for i, unique_g in enumerate(sorted(condition_set))}
-        self.idx_to_genre = {i: unique_g for i, unique_g in enumerate(sorted(condition_set))}
-
-        for i, row in df.iterrows():
-            gs = self.encode_conditions(row.spotify_genres)
-            for sent in row.content_sentences:
-                yield sent, gs
-
-class AudioFeatureDataset(Dataset):
-    def __init__(self, filename):
-        super(AudioFeatureDataset, self).__init__(filename)
+        self.trn_split = AFDataSplit(trn_path, self.data_type)
+        if test_path:
+            self.test_split = AFDataSplit(test_path, self.data_type)
+        else:
+            self.test_split = None
 
     def encode_conditions(self, conditions):
         return np.array([v for (k, v) in sorted(conditions.items()) if k not in self.ignore_keys])
@@ -125,26 +174,6 @@ class AudioFeatureDataset(Dataset):
             self.mean_condition = np.mean(conditions, axis=0)
 
         return self.mean_condition
-
-    def read_json_gen(self):
-        import json
-        df = pd.read_json(self.filename)
-
-        # all rows should have the same condition keys
-        self.ignore_keys = ['analysis_url', 'duration_ms', 'id', 'track_href', 'type', 'uri']
-        condition_list = [k for (k, v) in sorted(json.loads(df.audio_features[0].replace("'", "\"")).items()) if k not in self.ignore_keys]
-
-        self.n_conditions = len(condition_list)
-        self.idx_to_af = {i: c for i, c in enumerate(condition_list)}
-
-        for i, row in df.iterrows():
-            try:
-                fs = self.encode_conditions(json.loads(row.audio_features.replace("'", "\"")))
-            except json.decoder.JSONDecodeError:
-                # TODO: why audio_features = None ever?
-                fs = np.zeros(self.n_conditions)
-            for sent in row.content_sentences:
-                yield sent, fs
 
 
 norvig_list = None
@@ -254,24 +283,24 @@ def unk_func():
 
 def _get_line(data_type, elem):
     # JSON data can come with extra conditional info
-    if data_type == Dataset.DataType.JSON:
+    if data_type == Dataset.DataType.JSON and not isinstance(elem, str):
         line = elem[0]
     else:
         line = elem
 
     return line
 
-def _setup(path, vocabulary_size, condition_on):
+def _setup_vocab(trn_path, vocabulary_size, condition_on):
     global WORDS
     global REVERSE_WORDS
     wc = collections.Counter()
     if condition_on == Condition.GENRE:
-        dataset = GenreDataset(path)
+        dataset = GenreDataset(trn_path)
     elif condition_on == Condition.AF:
-        dataset = AudioFeatureDataset(path)
+        dataset = AFDataset(trn_path)
     else:
-        dataset = Dataset(path)
-    for n, elem in enumerate(iter(dataset)):
+        dataset = Dataset(trn_path)
+    for n, elem in enumerate(iter(dataset.trn_split)):
         if n % 100000 == 0:
             print("Fetching vocabulary from line {}".format(n))
             print("Current word count {}".format(len(wc.keys())))
@@ -333,39 +362,7 @@ def process(q, oq, iolock):
         if len(r) > 0:
             oq.put(r)
 
-
-# https://stackoverflow.com/questions/43078980/python-multiprocessing-with-generator
-def prepare_pair_data(path, vocabulary_size, tmp_path, min_length, max_length, condition_on, reverse=False):
-    global MIN_LENGTH
-    global MAX_LENGTH
-    MIN_LENGTH, MAX_LENGTH = min_length, max_length
-
-    print("Reading lines...")
-    print(f'MIN_LENGTH: {MIN_LENGTH}; MAX_LENGTH: {MAX_LENGTH}')
-    pkl_path = path.split(os.sep)[-1].split(".")[0] + "_vocabulary.pkl"
-    vocab_cache_path = os.path.join(tmp_path, pkl_path)
-    global WORDS
-    global REVERSE_WORDS
-    if not os.path.exists(vocab_cache_path):
-        print("Vocabulary cache {} not found".format(vocab_cache_path))
-        print("Prepping vocabulary")
-        _setup(path, vocabulary_size, condition_on)
-        with open(vocab_cache_path, "wb") as f:
-            pickle.dump((WORDS, REVERSE_WORDS), f)
-    else:
-        print("Vocabulary cache {} found".format(vocab_cache_path))
-        print("Loading...".format(vocab_cache_path))
-        with open(vocab_cache_path, "rb") as f:
-            r = pickle.load(f)
-        WORDS = r[0]
-        REVERSE_WORDS = r[1]
-    print("Vocabulary prep complete")
-
-
-    # don't use these for processing, but pass for ease of use later on
-    input_side = Lang("in", tmp_path, vocabulary_size)
-    output_side = Lang("out", tmp_path, vocabulary_size, reverse)
-
+def _setup_pairs(datasplit):
     print("Setting up queues")
     # some nasty multiprocessing
     # ~ 40 per second was the single core number
@@ -390,14 +387,8 @@ def prepare_pair_data(path, vocabulary_size, tmp_path, min_length, max_length, c
     avg_time_per_block = 30
     status_every = 100000
     print("Starting block processing")
-    if condition_on == Condition.GENRE:
-        dataset = GenreDataset(path)
-    elif condition_on == Condition.AF:
-        dataset = AudioFeatureDataset(path)
-    else:
-        dataset = Dataset(path)
 
-    for n, elem in enumerate(iter(dataset)):
+    for n, elem in enumerate(iter(datasplit)):
         curr_block.append(elem)
         if len(curr_block) > block_size:
             # this could block, oy
@@ -454,5 +445,65 @@ def prepare_pair_data(path, vocabulary_size, tmp_path, min_length, max_length, c
     print("Final line count {}".format(len(pairs)))
     pool.close()
     pool.join()
+
+    return pairs
+
+# https://stackoverflow.com/questions/43078980/python-multiprocessing-with-generator
+def prepare_pair_data(path, vocabulary_size, tmp_path, min_length, max_length, condition_on, reverse=False):
+    global MIN_LENGTH
+    global MAX_LENGTH
+    MIN_LENGTH, MAX_LENGTH = min_length, max_length
+
+    print("Reading lines...")
+    print(f'MIN_LENGTH: {MIN_LENGTH}; MAX_LENGTH: {MAX_LENGTH}')
+
+    if os.path.isdir(path):
+        # assume folder contains separate train.json and test.json
+        # TODO: would be cool not to assume .json format
+        trn_path = os.path.join(path, 'train.json')
+        test_path = os.path.join(path, 'test.json')
+    else:
+        trn_path = path
+        test_path = None
+
+    pkl_path = trn_path.split(os.sep)[-1].split(".")[0] + "_vocabulary.pkl"
+    vocab_cache_path = os.path.join(tmp_path, pkl_path)
+    global WORDS
+    global REVERSE_WORDS
+    if not os.path.exists(vocab_cache_path):
+        print("Vocabulary cache {} not found".format(vocab_cache_path))
+        print("Prepping vocabulary")
+        _setup_vocab(trn_path, vocabulary_size, condition_on)
+        with open(vocab_cache_path, "wb") as f:
+            pickle.dump((WORDS, REVERSE_WORDS), f)
+    else:
+        print("Vocabulary cache {} found".format(vocab_cache_path))
+        print("Loading...".format(vocab_cache_path))
+        with open(vocab_cache_path, "rb") as f:
+            r = pickle.load(f)
+        WORDS = r[0]
+        REVERSE_WORDS = r[1]
+    print("Vocabulary prep complete")
+
+    if condition_on == Condition.GENRE:
+        dataset = GenreDataset(trn_path, test_path)
+    elif condition_on == Condition.AF:
+        dataset = AFDataset(trn_path, test_path)
+    else:
+        dataset = Dataset(trn_path, test_path)
+
+    # don't use these for processing, but pass for ease of use later on
+    dataset.input_side = Lang("in", tmp_path, vocabulary_size)
+    dataset.output_side = Lang("out", tmp_path, vocabulary_size, reverse)
+
+    print("Pair preparation for train split")
+    dataset.trn_pairs = _setup_pairs(dataset.trn_split)
+
+    if dataset.test_split:
+        print("Pair preparation for test split")
+        dataset.test_pairs = _setup_pairs(dataset.test_split)
+    else:
+        dataset.test_pairs = None
+
     print("Pair preparation complete")
-    return input_side, output_side, pairs, dataset
+    return dataset

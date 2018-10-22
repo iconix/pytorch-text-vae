@@ -60,15 +60,22 @@ def word_tensor(lang, string):
     tensor = Variable(tensor)
     return tensor
 
-def random_training_set(pairs, input_side, output_side, random_state, device):
-    pair_i = random_state.choice(len(pairs))
-    pair = pairs[pair_i]
-
+def _pair_to_tensors(input_side, output_side, pair, device):
     inp = word_tensor(input_side, pair[0]).to(device)
     target = word_tensor(output_side, pair[1]).to(device)
     condition = torch.tensor(pair[2], dtype=torch.float).unsqueeze(0).to(device) if len(pair) == 3 else None
 
     return inp, target, condition
+
+def random_training_set(dataset, random_state, device):
+    pair_i = random_state.choice(len(dataset.trn_pairs))
+    pair = dataset.trn_pairs[pair_i]
+    return _pair_to_tensors(dataset.input_side, dataset.output_side, pair, device)
+
+def random_test_set(dataset, random_state, device):
+    pair_i = random_state.choice(len(dataset.test_pairs))
+    pair = dataset.test_pairs[pair_i]
+    return _pair_to_tensors(dataset.input_side, dataset.output_side, pair, device)
 
 def index_to_word(lang, top_i):
     return lang.index_to_word(top_i) + " "
