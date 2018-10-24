@@ -56,7 +56,7 @@ def train_vae(data_path, tmp_path=f'..{os.sep}tmp',
         if condition_on == Condition.NONE:
             condition_size = 0
         elif condition_on == Condition.AF:
-            condition_size = dataset.n_conditions
+            condition_size = dataset.trn_split.n_conditions
 
         with open(cache_file, "wb") as f:
             pickle.dump((dataset, z_size, condition_size, condition_on, decoder_hidden_size, encoder_hidden_size, n_encoder_layers), f)
@@ -179,7 +179,7 @@ def train_vae(data_path, tmp_path=f'..{os.sep}tmp',
                 if generate_samples:
                     rand_z = torch.randn(z_size).unsqueeze(0).to(DEVICE)
                     if condition_on == Condition.GENRE:
-                        fixed_condition = torch.FloatTensor(dataset.encode_conditions(['vapor soul'])).to(DEVICE)
+                        fixed_condition = torch.FloatTensor(dataset.trn_split.encode_conditions(['vapor soul'])).to(DEVICE)
                     elif condition_on == Condition.AF:
                         fixed_condition = torch.FloatTensor(dataset.get_mean_condition(dataset.test_pairs)).to(DEVICE)
                     else:

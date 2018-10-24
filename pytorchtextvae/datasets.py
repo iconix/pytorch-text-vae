@@ -35,6 +35,9 @@ class DataSplit:
         self.filename = filename
         self.data_type = data_type
 
+        self.df = pd.read_json(self.filename)
+        self.n_conditions = -1
+
     def __iter__(self):
         if self.data_type == Dataset.DataType.JSON:
             return self.read_json_gen()
@@ -46,40 +49,62 @@ class DataSplit:
             for line in f:
                 yield unidecode.unidecode(line)
 
+    def encode_conditions(self, conditions):
+        raise NotImplementedError
+
+    def decode_conditions(self, tensor):
+        raise NotImplementedError
+
     def read_json_gen(self):
-        df = pd.read_json(self.filename)
-
-        self.n_conditions = -1
-
-        for i, row in df.iterrows():
+        for i, row in self.df.iterrows():
             for sent in row.content_sentences:
                 yield sent
 
 class GenreDataSplit(DataSplit):
-    def __init__(self, filename):
+    def __init__(self, filename, data_type, condition_set=None):
         super(GenreDataSplit, self).__init__(filename, data_type)
 
+        if condition_set:
+            self.condition_set = condition_set
+        else:
+            self.condition_set = set([g for gg in self.df.spotify_genres for g in gg])
+
+        self.genre_to_idx = {unique_g: i for i, unique_g in enumerate(sorted(self.condition_set))}
+        self.idx_to_genre = {i: unique_g for i, unique_g in enumerate(sorted(self.condition_set))}
+
+        self.n_conditions = len(self.condition_set) + 1
+
+    def encode_conditions(self, conditions):
+        e = np.zeros(self.n_conditions)
+        for g in conditions:
+            if g in self.genre_to_idx:
+                e[self.genre_to_idx[g]] = 1
+            else:
+                # for unknown genres
+                e[len(e) - 1] = 1
+        return e
+
+    def decode_conditions(self, tensor):
+        genres = []
+        for i, x in enumerate(tensor.squeeze()):
+            if x.item() == 1:
+                if i in self.idx_to_genre:
+                    genres.append(self.idx_to_genre[i])
+                else:
+                    genres.append('UNK')
+        return genres
+
     def read_json_gen(self):
-        df = pd.read_json(self.filename)
-
-        condition_set = set([g for gg in df.spotify_genres for g in gg])
-        self.n_conditions = len(condition_set) + 1
-        self.genre_to_idx = {unique_g: i for i, unique_g in enumerate(sorted(condition_set))}
-        self.idx_to_genre = {i: unique_g for i, unique_g in enumerate(sorted(condition_set))}
-
-        for i, row in df.iterrows():
+        for i, row in self.df.iterrows():
             gs = self.encode_conditions(row.spotify_genres)
             for sent in row.content_sentences:
                 yield sent, gs
 
 class AFDataSplit(DataSplit):
-    def __init__(self, filename):
+    def __init__(self, filename, data_type):
         super(AFDataSplit, self).__init__(filename, data_type)
 
-    def read_json_gen(self):
         import json
-        df = pd.read_json(self.filename)
-
         # all rows should have the same condition keys
         self.ignore_keys = ['analysis_url', 'duration_ms', 'id', 'track_href', 'type', 'uri']
         condition_list = [k for (k, v) in sorted(json.loads(df.audio_features[0].replace("'", "\"")).items()) if k not in self.ignore_keys]
@@ -87,7 +112,17 @@ class AFDataSplit(DataSplit):
         self.n_conditions = len(condition_list)
         self.idx_to_af = {i: c for i, c in enumerate(condition_list)}
 
-        for i, row in df.iterrows():
+    def encode_conditions(self, conditions):
+        return np.array([v for (k, v) in sorted(conditions.items()) if k not in self.ignore_keys])
+
+    def decode_conditions(self, tensor):
+        afs = {}
+        for i, x in enumerate(tensor.squeeze()):
+            afs[self.idx_to_af[i]] = x.item()
+        return afs
+
+    def read_json_gen(self):
+        for i, row in self.df.iterrows():
             try:
                 fs = self.encode_conditions(json.loads(row.audio_features.replace("'", "\"")))
             except json.decoder.JSONDecodeError:
@@ -113,41 +148,15 @@ class Dataset:
         else:
             self.test_split = None
 
-    def encode_conditions(self, conditions):
-        raise NotImplementedError
-
-    def decode_conditions(self, tensor):
-        raise NotImplementedError
-
 class GenreDataset(Dataset):
     def __init__(self, trn_path, test_path=None):
         super(GenreDataset, self).__init__(trn_path, test_path)
 
         self.trn_split = GenreDataSplit(trn_path, self.data_type)
         if test_path:
-            self.test_split = GenreDataSplit(test_path, self.data_type)
+            self.test_split = GenreDataSplit(test_path, self.data_type, self.trn_split.condition_set)
         else:
             self.test_split = None
-
-    def encode_conditions(self, conditions):
-        e = np.zeros(self.n_conditions)
-        for g in conditions:
-            if g in self.genre_to_idx:
-                e[self.genre_to_idx[g]] = 1
-            else:
-                # for unknown genres
-                e[len(e) - 1] = 1
-        return e
-
-    def decode_conditions(self, tensor):
-        genres = []
-        for i, x in enumerate(tensor.squeeze()):
-            if x.item() == 1:
-                if i in self.idx_to_genre:
-                    genres.append(self.idx_to_genre[i])
-                else:
-                    genres.append('UNK')
-        return genres
 
 class AFDataset(Dataset):
     def __init__(self, trn_path, test_path=None):
@@ -158,15 +167,6 @@ class AFDataset(Dataset):
             self.test_split = AFDataSplit(test_path, self.data_type)
         else:
             self.test_split = None
-
-    def encode_conditions(self, conditions):
-        return np.array([v for (k, v) in sorted(conditions.items()) if k not in self.ignore_keys])
-
-    def decode_conditions(self, tensor):
-        afs = {}
-        for i, x in enumerate(tensor.squeeze()):
-            afs[self.idx_to_af[i]] = x.item()
-        return afs
 
     def get_mean_condition(self, pairs):
         if not hasattr(self, 'mean_condition'):
