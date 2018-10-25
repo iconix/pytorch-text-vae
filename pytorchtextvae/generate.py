@@ -50,7 +50,7 @@ def load_model(saved_vae, stored_info, device, cache_path=str(Path('../tmp')), s
 
     return vae, dataset, z_size, random_state
 
-def generate(vae, dataset, z_size, random_state, device, condition_inputs=None, max_length=50, num_sample=10, temp=0.75, print_z=False):
+def generate(vae, dataset, z_size, random_state, device, condition_inputs=None, max_length=50, num_sample=10, temp=0.75, print_z=False, clean_gen=False):
     gens = []
     zs = []
     conditions = []
@@ -63,7 +63,7 @@ def generate(vae, dataset, z_size, random_state, device, condition_inputs=None, 
 
         if dataset.trn_split.n_conditions > -1:
             if isinstance(condition_inputs, list):
-                condition = torch.tensor(dataset.encode_conditions(condition_inputs), dtype=torch.float).unsqueeze(0).to(device)
+                condition = torch.tensor(dataset.trn_split.encode_conditions(condition_inputs), dtype=torch.float).unsqueeze(0).to(device)
             else:
                 condition = model.random_training_set(dataset, random_state, device)[2]
         else:
@@ -80,9 +80,14 @@ def generate(vae, dataset, z_size, random_state, device, condition_inputs=None, 
         # flip it back
         generated_str = generated_str[::-1]
 
+        if clean_gen:
+            # remove 1) UNKs, 2) consecutive duplicated words
+            gen_list = generated_str.replace('UNK', '').split()
+            generated_str = ' '.join([v for i, v in enumerate(gen_list) if i == 0 or v != gen_list[i-1]])
+
         print('---')
         if dataset.trn_split.n_conditions > -1:
-            print(dataset.decode_conditions(condition))
+            print(dataset.trn_split.decode_conditions(condition))
         print(generated_str)
         gens.append(generated_str)
         zs.append(z)
@@ -94,7 +99,7 @@ def generate(vae, dataset, z_size, random_state, device, condition_inputs=None, 
     return gens, zs, conditions
 
 def run(saved_vae, stored_info, cache_path=str(Path(f'..{os.sep}tmp')), condition_inputs=None, max_length=50, num_sample=10, seed=None, temp=0.75,
-            use_cuda=True, print_z=False):
+            use_cuda=True, print_z=False, clean_gen=False):
 
     args_passed = locals()
     print(args_passed)
@@ -103,7 +108,7 @@ def run(saved_vae, stored_info, cache_path=str(Path(f'..{os.sep}tmp')), conditio
 
     with torch.no_grad():
         vae, dataset, z_size, random_state = load_model(saved_vae, stored_info, DEVICE, cache_path, seed)
-        gens, zs, conditions = generate(vae, dataset, z_size, random_state, DEVICE, condition_inputs, max_length, num_sample, temp, print_z)
+        gens, zs, conditions = generate(vae, dataset, z_size, random_state, DEVICE, condition_inputs, max_length, num_sample, temp, print_z, clean_gen)
 
 if __name__ == "__main__":
     import fire; fire.Fire(run)
